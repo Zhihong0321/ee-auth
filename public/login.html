@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Atap.solar</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Atap.solar</h1>
+            <p>Authentication</p>
+        </header>
+        
+        <div class="divider"></div>
+
+        <main>
+            <!-- Step 1: Phone Number -->
+            <div id="step-phone" class="step active">
+                <label for="phone">Mobile Number</label>
+                <div class="input-group">
+                    <span class="prefix">+60</span>
+                    <input type="tel" id="phone" placeholder="0123456789" autofocus>
+                </div>
+                <button id="btn-send-otp">Send Verification Code</button>
+            </div>
+
+            <!-- Step 2: OTP -->
+            <div id="step-otp" class="step">
+                <p id="otp-message">Code sent to your WhatsApp.</p>
+                <label for="otp">Verification Code</label>
+                <div class="input-group">
+                    <input type="text" id="otp" placeholder="123456" maxlength="6">
+                </div>
+                <button id="btn-verify-otp">Login</button>
+                <button id="btn-back" class="link-btn">Wrong number?</button>
+            </div>
+
+            <!-- Messages -->
+            <div id="message-box" class="hidden"></div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

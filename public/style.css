@@ -1,0 +1,133 @@
+:root {
+    --primary: #000;
+    --secondary: #666;
+    --border: #ccc;
+    --bg: #fff;
+    --error: #d9534f;
+    --success: #5cb85c;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg);
+    color: var(--primary);
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+.container {
+    width: 100%;
+    max-width: 400px;
+    padding: 2rem;
+    text-align: center;
+}
+
+header h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+header p {
+    margin: 0.5rem 0 0;
+    color: var(--secondary);
+    font-size: 0.9rem;
+}
+
+.divider {
+    height: 1px;
+    background-color: var(--border);
+    margin: 2rem 0;
+    width: 100%;
+}
+
+.step {
+    display: none;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.step.active {
+    display: flex;
+}
+
+label {
+    text-align: left;
+    font-size: 0.85rem;
+    color: var(--secondary);
+    font-weight: 500;
+    margin-bottom: -0.5rem;
+}
+
+.input-group {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--primary);
+    padding-bottom: 0.5rem;
+}
+
+.prefix {
+    font-size: 1.2rem;
+    margin-right: 0.5rem;
+    color: var(--secondary);
+    user-select: none;
+}
+
+input {
+    border: none;
+    background: transparent;
+    font-size: 1.2rem;
+    width: 100%;
+    outline: none;
+    padding: 0;
+}
+
+input::placeholder {
+    color: #ddd;
+}
+
+button {
+    background-color: var(--primary);
+    color: #fff;
+    border: none;
+    padding: 1rem;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 1rem;
+    transition: opacity 0.2s;
+}
+
+button:hover {
+    opacity: 0.8;
+}
+
+.link-btn {
+    background: none;
+    color: var(--secondary);
+    padding: 0.5rem;
+    font-size: 0.9rem;
+    margin-top: 0;
+    text-decoration: underline;
+}
+
+#message-box {
+    margin-top: 2rem;
+    padding: 1rem;
+    font-size: 0.9rem;
+}
+
+.error {
+    color: var(--error);
+}
+
+.success {
+    color: var(--success);
+}
+
+.hidden {
+    display: none;
+}

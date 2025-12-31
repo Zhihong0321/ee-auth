@@ -1,0 +1,164 @@
+Here is the complete Master Build Plan in Markdown format. You can save this as AUTH_HUB_SPEC.md or copy-paste it directly into your AI Coding Agent's chat window.
+
+🏗️ BUILD PLAN: Central Auth Service (WhatsApp SSO)
+1. Project Context
+Goal: Build a centralized Authentication Service hosted at auth.atap.solar. Purpose: Authenticate users via WhatsApp OTP and issue a shared session cookie for all *.atap.solar apps (Calculator, Quote, Dashboard, etc.). Constraint: "Invite Only" — Users can only log in if their phone number is already pre-registered in the database.
+
+2. Technical Stack
+Infrastructure: Railway (Node.js or Python).
+
+Database: Shared PostgreSQL Instance.
+
+Auth Mechanism: WhatsApp OTP (via internal API).
+
+Session Management: JSON Web Token (JWT) in HTTPOnly Cookie.
+
+3. Database Schema
+Ensure the shared PostgreSQL database has a users table. Note: If using Prisma/TypeORM, generate the migration for this.
+
+SQL
+
+-- "users" table
+CREATE TABLE IF NOT EXISTS users (
+  id            SERIAL PRIMARY KEY,
+  phone_number  VARCHAR(20) UNIQUE NOT NULL, -- Format: 60123456789 (Digits only)
+  role          VARCHAR(20) DEFAULT 'user',  -- e.g., 'admin', 'staff'
+  created_at    TIMESTAMP DEFAULT NOW(),
+  updated_at    TIMESTAMP DEFAULT NOW()
+);
+
+-- Optional: "otps" table (If not using Redis)
+CREATE TABLE IF NOT EXISTS otps (
+  phone_number  VARCHAR(20) PRIMARY KEY,
+  code          VARCHAR(6) NOT NULL,
+  expires_at    TIMESTAMP NOT NULL
+);
+4. Environment Variables (.env)
+The service requires these variables to function:
+
+Bash
+
+PORT=3000
+# Connection string to the SHARED Postgres DB
+DATABASE_URL="postgresql://user:pass@host:port/dbname"
+
+# Security Keys
+JWT_SECRET="[MUST_BE_EXACTLY_THE_SAME_ACROSS_ALL_APPS]"
+
+# WhatsApp Integration
+WHATSAPP_API_URL="https://whatsapp-api-server-production-c15f.up.railway.app"
+# (Optional) If you added API Key protection to the WA Server
+# WHATSAPP_API_KEY="your-secret-key"
+
+# Cookie Configuration
+COOKIE_DOMAIN=".atap.solar"
+5. API Logic & Endpoints
+🟢 Endpoint 1: Send OTP
+Route: POST /auth/send-otp Body: { "phoneNumber": "60123456789" }
+
+Logic Flow:
+
+Sanitize: Strip all non-digit characters (+, -, spaces) from input.
+
+Security Check (The "Bouncer"):
+
+Query DB: SELECT id FROM users WHERE phone_number = sanitized_phone.
+
+IF NOT FOUND: Return 403 Forbidden ("Access Denied: Number not registered").
+
+Reason: Strictly private/internal access only.
+
+WhatsApp Health Check:
+
+Request: GET ${WHATSAPP_API_URL}/api/status.
+
+If ready: false, return 503 Service Unavailable.
+
+Generate OTP: Create a cryptographically secure 6-digit random string (e.g., 582910).
+
+Store OTP: Save to Redis/DB with expires_at = NOW() + 5 minutes.
+
+Send Message:
+
+Request: POST ${WHATSAPP_API_URL}/api/send
+
+Body: { "to": sanitizedNumber, "message": "Your Atap.solar verification code is: 582910" }
+
+Response: 200 OK { "message": "OTP sent" }.
+
+🟢 Endpoint 2: Verify & Login
+Route: POST /auth/verify-otp Body: { "phoneNumber": "60123456789", "code": "582910" }
+
+Logic Flow:
+
+Validate: Check if code matches the stored OTP for phoneNumber AND expires_at > NOW().
+
+If invalid: Return 400 Bad Request.
+
+Fetch User: Retrieve id, phone_number, and role from DB.
+
+Create Token (JWT):
+
+Payload: { userId: user.id, phone: user.phone_number, role: user.role }
+
+Sign with process.env.JWT_SECRET.
+
+Expiry: 7d (7 Days).
+
+Set Shared Cookie (CRITICAL STEP):
+
+Name: auth_token
+
+Value: [The JWT String]
+
+Domain: .atap.solar (⚠️ Must start with a dot to share across subdomains)
+
+Path: /
+
+HttpOnly: true (Security: JS cannot read it)
+
+Secure: true (HTTPS only)
+
+SameSite: Lax (Required for subdomain navigation)
+
+Response: 200 OK { "success": true, "user": { ... } }.
+
+🟢 Endpoint 3: Current User (Me)
+Route: GET /auth/me Logic:
+
+Read auth_token cookie.
+
+Verify JWT signature.
+
+Return decoded user info.
+
+6. Implementation Instructions (Middleware for Client Apps)
+This logic applies to the Other Apps (Calculator, Quote, etc.), not the Auth Hub.
+
+Create a middleware function requireAuth that runs on protected routes:
+
+JavaScript
+
+// Example Logic (Node.js)
+const token = req.cookies.auth_token;
+
+if (!token) {
+    // Redirect to Auth Hub, but remember where we came from
+    const returnTo = encodeURIComponent(req.originalUrl); // e.g. https://calculator.atap.solar/dashboard
+    return res.redirect(`https://auth.atap.solar/login?return_to=${returnTo}`);
+}
+
+try {
+    const user = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = user;
+    next();
+} catch (err) {
+    // Token invalid/expired -> Redirect to login
+    return res.redirect(`https://auth.atap.solar/login`);
+}
+7. Security Checklist
+[ ] CORS: Configure CORS on Auth Hub to allow credentials (Access-Control-Allow-Credentials: true) from origin https://*.atap.solar.
+
+[ ] HTTPS: Ensure all apps are running on HTTPS (Railway handles this).
+
+[ ] Secret: Ensure JWT_SECRET is complex and identical across all services.
