@@ -68,6 +68,11 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok' });
 });
 
+// Documentation
+app.get('/docs', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/docs.html'));
+});
+
 // Fallback to login page for root
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/login.html'));

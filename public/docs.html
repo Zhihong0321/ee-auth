@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Hub Integration Docs</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 2rem; color: #333; }
+        h1, h2, h3 { color: #000; }
+        h1 { border-bottom: 2px solid #eee; padding-bottom: 0.5rem; }
+        code { background: #f4f4f4; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: "Menlo", "Monaco", monospace; font-size: 0.9em; }
+        pre { background: #f8f8f8; padding: 1rem; border-radius: 8px; overflow-x: auto; border: 1px solid #ddd; }
+        .endpoint { display: inline-block; padding: 0.2rem 0.5rem; background: #e7f5ff; color: #004085; border-radius: 4px; font-weight: bold; margin-bottom: 0.5rem; }
+        .warning { background: #fff3cd; color: #856404; padding: 1rem; border-radius: 8px; border: 1px solid #ffeeba; margin: 1rem 0; }
+        .step { margin-bottom: 2rem; }
+    </style>
+</head>
+<body>
+
+    <h1>Auth Hub Integration Guide</h1>
+    <p>This service (Auth Hub) provides centralized authentication for all <code>*.atap.solar</code> applications using a shared HTTPOnly Cookie.</p>
+
+    <div class="warning">
+        <strong>Core Concept:</strong> Users log in once at <code>auth.atap.solar</code>. A secure cookie (<code>auth_token</code>) is set for the wildcard domain <code>.atap.solar</code>. All subdomains (e.g., <code>calculator.atap.solar</code>) can read this cookie to authenticate the user.
+    </div>
+
+    <div class="step">
+        <h2>1. The Authentication Flow</h2>
+        <ol>
+            <li>User visits your app (e.g., <code>calculator.atap.solar/dashboard</code>).</li>
+            <li>Your app checks for the <code>auth_token</code> cookie.</li>
+            <li><strong>If missing:</strong> Redirect user to Auth Hub.<br>
+                <code>https://auth.atap.solar/?return_to=https://calculator.atap.solar/dashboard</code>
+            </li>
+            <li>User logs in via WhatsApp OTP on Auth Hub.</li>
+            <li>Auth Hub sets the cookie and redirects user back to your <code>return_to</code> URL.</li>
+            <li>Your app now sees the cookie, verifies it, and logs the user in.</li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>2. Environment Setup</h2>
+        <p>Ensure your application has the exact same <strong>JWT Secret</strong> as the Auth Hub.</p>
+        <pre><code>JWT_SECRET="[THE_SHARED_SECRET_KEY]"</code></pre>
+    </div>
+
+    <div class="step">
+        <h2>3. Middleware Example (Node.js/Express)</h2>
+        <p>Copy this middleware into your Express application to protect routes.</p>
+        
+        <pre><code>import jwt from 'jsonwebtoken';
+
+const AUTH_URL = 'https://auth.atap.solar';
+
+export const requireAuth = (req, res, next) => {
+    // 1. Get Token from Cookie
+    const token = req.cookies.auth_token;
+
+    if (!token) {
+        // Redirect to Auth Hub with Return URL
+        const returnTo = encodeURIComponent(req.protocol + '://' + req.get('host') + req.originalUrl);
+        return res.redirect(`${AUTH_URL}/?return_to=${returnTo}`);
+    }
+
+    try {
+        // 2. Verify Token
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Attach user to request
+        req.user = decoded; 
+        // decoded = { userId, phone, role, isAdmin, name }
+        
+        next();
+    } catch (err) {
+        // Token invalid or expired
+        return res.redirect(`${AUTH_URL}/?return_to=${encodeURIComponent(req.originalUrl)}`);
+    }
+};</code></pre>
+    </div>
+
+    <div class="step">
+        <h2>4. Handling Logout</h2>
+        <p>To log a user out, you can simply redirect them to the logout endpoint, or clear the cookie yourself (must specify domain).</p>
+        
+        <h3>Option A: Redirect (Easiest)</h3>
+        <p>Redirect the user to: <code>https://auth.atap.solar/auth/logout</code></p>
+
+        <h3>Option B: Clear Locally</h3>
+        <pre><code>res.clearCookie('auth_token', {
+    domain: '.atap.solar',
+    path: '/'
+});
+res.redirect('/login');</code></pre>
+    </div>
+
+    <div class="step">
+        <h2>5. CORS & AJAX</h2>
+        <p>If your frontend (SPA) needs to make API calls to Auth Hub (e.g., to fetch user profile):</p>
+        <pre><code>fetch('https://auth.atap.solar/auth/me', {
+    credentials: 'include' // CRITICAL: Sends the cookie
+});</code></pre>
+        <p>Make sure to add your domain to the <strong>Allowed Origins</strong> in the Auth Hub Admin Dashboard.</p>
+    </div>
+
+</body>
+</html>
