@@ -100,9 +100,12 @@ btnVerify.addEventListener('click', async () => {
             setTimeout(() => {
                 if (returnTo) {
                     window.location.href = decodeURIComponent(returnTo);
+                } else if (data.user && data.user.isAdmin) {
+                    // Admin Fallback
+                    window.location.href = '/admin/dashboard';
                 } else {
-                    // Default fallback if no return_to provided
-                    window.location.href = '/auth/me'; // Or some dashboard
+                    // Standard User Fallback
+                    window.location.href = '/docs';
                 }
             }, 1000);
         } else {
