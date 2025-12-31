@@ -67,8 +67,11 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     // So we just replace the leading '0' with '60'.
     const waTarget = '60' + localPhone.substring(1);
 
+    // Remove trailing slash from ENV if present to avoid double slash issues
+    const safeApiUrl = WA_API_URL?.replace(/\/$/, '');
+
     try {
-        await axios.post(`${WA_API_URL}/api/send`, {
+        await axios.post(`${safeApiUrl}/api/send`, {
             to: waTarget,
             message: `Your Atap.solar verification code is: ${otp}`
         });
