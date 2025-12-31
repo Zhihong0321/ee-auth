@@ -52,13 +52,14 @@ const corsOptions: cors.CorsOptions = {
     allowedHeaders: ['Content-Type', 'Authorization']
 };
 
+app.use(logger);
+
+// Serve Static Files (Before CORS to ensure assets load)
+app.use(express.static(path.join(__dirname, '../public')));
+
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
-app.use(logger);
-
-// Serve Static Files
-app.use(express.static(path.join(__dirname, '../public')));
 
 // Routes
 app.use('/auth', authRoutes);
