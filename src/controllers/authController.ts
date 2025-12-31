@@ -11,11 +11,16 @@ const WA_API_URL = process.env.WHATSAPP_API_URL;
 // Helper to sanitize phone number (remove non-digits)
 const sanitizePhone = (phone: string) => phone.replace(/\D/g, '');
 
-// Helper: Convert 60123456789 -> 0123456789 (Local format for DB search if needed)
+// Helper: Convert various formats to local '012...' format for DB search
 const toLocalFormat = (phone: string) => {
+  // If it starts with 60, remove 6 and ensure it starts with 0 (6012 -> 012)
   if (phone.startsWith('60')) return '0' + phone.slice(2);
+  
+  // If it starts with 0, keep it (012 -> 012)
   if (phone.startsWith('0')) return phone;
-  return phone; // Fallback
+  
+  // If it's just the raw digits without prefix (123456789), add the 0 (-> 0123456789)
+  return '0' + phone;
 };
 
 export const sendOtp = async (req: Request, res: Response): Promise<void> => {
