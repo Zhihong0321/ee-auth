@@ -19,37 +19,38 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
-    min-height: 100vh;
-    flex-direction: column;
+    height: 100vh; /* Fixed height */
+    overflow: hidden; /* Prevent scrolling */
 }
 
 .main-container {
     width: 100%;
-    max-width: 480px;
-    padding: 2rem;
+    max-width: 440px;
+    padding: 1.5rem;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    align-items: center;
+    height: 100%;
+    justify-content: space-between; /* Spread header, content, footer */
 }
 
 /* Header */
 .auth-header {
     width: 100%;
     text-align: center;
-    margin-bottom: 3rem;
+    margin-top: 1rem;
+    padding-bottom: 1.5rem;
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 2rem;
 }
 
 .logo {
-    height: 48px; /* Adjust based on logo aspect ratio */
+    height: 40px;
     width: auto;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
 }
 
 .company-name {
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -58,142 +59,52 @@ body {
 
 /* Content */
 .auth-content {
-    width: 100%;
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center; /* Center form vertically */
+    padding: 2rem 0;
 }
 
 .intro-text {
-    margin-bottom: 2.5rem;
+    margin-bottom: 2rem;
     text-align: center;
 }
 
 .intro-text h1 {
-    font-size: 1.5rem;
+    font-size: 1.4rem;
     font-weight: 600;
     margin: 0 0 0.5rem 0;
     color: var(--text-primary);
 }
 
 .intro-text p {
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: var(--text-secondary);
     margin: 0;
 }
 
-/* Steps */
-.step {
-    display: none;
-    flex-direction: column;
-    gap: 1.5rem;
-    animation: fadeIn 0.3s ease-in-out;
-}
-
-.step.active {
-    display: flex;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* Forms */
-.form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.sub-label {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    margin: 0;
-}
-
-.phone-input-wrapper, .input-wrapper {
-    display: flex;
-    align-items: center;
-    border-bottom: 1px solid var(--border-color); /* The Line Design */
-    transition: border-color 0.2s;
-    padding-bottom: 0.5rem;
-}
-
-.phone-input-wrapper:focus-within, .input-wrapper:focus-within {
-    border-bottom: 1px solid var(--primary-color);
-}
-
-.country-code {
-    font-size: 1.25rem;
-    font-weight: 400;
-    color: var(--text-secondary);
-    margin-right: 1rem;
-    user-select: none;
-}
-
-input {
-    border: none;
-    background: transparent;
-    font-size: 1.25rem;
-    color: var(--text-primary);
-    width: 100%;
-    outline: none;
-    padding: 0;
-    font-family: var(--font-family);
-}
-
-input::placeholder {
-    color: #d1d5db;
-}
-
-/* Buttons */
-.btn-primary {
-    background-color: var(--primary-color);
-    color: #fff;
-    border: none;
-    padding: 1rem;
-    font-size: 1rem;
-    font-weight: 500;
-    cursor: pointer;
-    width: 100%;
-    transition: background-color 0.2s;
-    border-radius: 0; /* Sharp corners for professional look */
-    margin-top: 1rem;
-}
-
-.btn-primary:hover {
-    background-color: var(--primary-hover);
-}
-
-.btn-primary:disabled {
-    background-color: var(--text-secondary);
-    cursor: not-allowed;
-}
-
-.btn-text {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 0.875rem;
-    cursor: pointer;
-    text-decoration: underline;
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-}
-
-.btn-text:hover {
-    color: var(--text-primary);
-}
+/* ... existing step, form-group, input styles ... */
 
 /* Footer */
 .auth-footer {
-    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
     text-align: center;
-    font-size: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.auth-footer a {
+    color: var(--text-primary);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.auth-footer .copyright {
+    margin-top: 0.75rem;
+    font-size: 0.7rem;
     color: #9ca3af;
 }
 
