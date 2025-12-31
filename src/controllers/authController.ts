@@ -153,3 +153,21 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
+
+export const me = (req: Request, res: Response) => {
+    // Middleware should have attached user to req
+    const user = (req as any).user;
+    if (!user) {
+        res.status(401).json({ error: 'Not authenticated' });
+        return;
+    }
+    res.json({ user });
+};
+
+export const logout = (req: Request, res: Response) => {
+    res.clearCookie('auth_token', {
+        domain: COOKIE_DOMAIN,
+        path: '/'
+    });
+    res.json({ message: 'Logged out' });
+};
