@@ -62,8 +62,10 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     );
 
     // 4. Send via WhatsApp API
-    let waTarget = cleanPhone;
-    if (waTarget.startsWith('0')) waTarget = '6' + waTarget;
+    // Ensure we send to 601... format. 
+    // localPhone is guaranteed to look like '012...' due to toLocalFormat()
+    // So we just replace the leading '0' with '60'.
+    const waTarget = '60' + localPhone.substring(1);
 
     try {
         await axios.post(`${WA_API_URL}/api/send`, {
