@@ -33,15 +33,16 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 
     const cleanPhone = sanitizePhone(phoneNumber);
     const localPhone = toLocalFormat(cleanPhone);
+    const intlPhone = '60' + localPhone.substring(1); // 012... -> 6012...
 
     // 1. Check if user exists (Join User -> Agent)
-    // We strictly use the Agent's contact to find the User.
+    // Handle both local (012...) and international (6012...) formats
     const userResult = await query(
-      `SELECT u.id, a.name 
-       FROM "user" u 
-       JOIN agent a ON u.linked_agent_profile = a.bubble_id 
-       WHERE a.contact = $1`,
-      [localPhone]
+      `SELECT u.id, a.name
+       FROM "user" u
+       JOIN agent a ON u.linked_agent_profile = a.bubble_id
+       WHERE a.contact = $1 OR a.contact = $2`,
+      [localPhone, intlPhone]
     );
 
     if (userResult.rows.length === 0) {
@@ -107,12 +108,14 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     // 2. Get User Details
+    // Handle both local (012...) and international (6012...) formats
+    const intlPhone = '60' + localPhone.substring(1);
     const userResult = await query(
-      `SELECT u.id, u.access_level, a.name, a.contact 
-       FROM "user" u 
-       JOIN agent a ON u.linked_agent_profile = a.bubble_id 
-       WHERE a.contact = $1`,
-      [localPhone]
+      `SELECT u.id, u.access_level, a.name, a.contact
+       FROM "user" u
+       JOIN agent a ON u.linked_agent_profile = a.bubble_id
+       WHERE a.contact = $1 OR a.contact = $2`,
+      [localPhone, intlPhone]
     );
 
     if (userResult.rows.length === 0) {
@@ -132,12 +135,12 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
 
     // 3. Generate JWT
     const token = jwt.sign(
-      { 
-          userId: user.id, 
-          phone: cleanPhone, 
-          role: 'user', 
-          isAdmin: isAdmin, 
-          name: user.name 
+      {
+          userId: user.id,
+          phone: localPhone,
+          role: 'user',
+          isAdmin: isAdmin,
+          name: user.name
       },
       JWT_SECRET,
       { expiresIn: '14d' }
@@ -156,7 +159,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     // Clean up used OTP from Postgres
     await query('DELETE FROM auth_hub_otps WHERE phone_number = $1', [cleanPhone]);
 
-    res.json({ success: true, user: { id: user.id, name: user.name, phone: cleanPhone, isAdmin } });
+    res.json({ success: true, user: { id: user.id, name: user.name, phone: localPhone, isAdmin } });
 
   } catch (error) {
     console.error('Verify OTP Error:', error);

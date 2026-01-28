@@ -1,0 +1,874 @@
+================================================================================
+EE-AUTH SERVICE - COMPLETE DOCUMENTATION FOR AI CODERS
+================================================================================
+
+PROJECT OVERVIEW
+================================================================================
+Name: ee-auth
+Version: 1.0.0
+Purpose: Centralized Authentication Service for *.atap.solar domain
+Description: Single Sign-On (SSO) service using WhatsApp OTP authentication
+             with shared cookie-based session management across subdomains
+
+Architecture: REST API + Web UI
+Platform: Node.js/TypeScript on Railway
+Deployment: https://auth.atap.solar
+
+================================================================================
+TECHNICAL STACK
+================================================================================
+
+Runtime & Framework:
+- Node.js
+- TypeScript 5.9.3
+- Express 5.2.1
+- ts-node-dev 2.0.0 (development)
+
+Database:
+- PostgreSQL (shared Railway instance)
+- pg library (node-postgres) 8.16.3
+
+Authentication & Security:
+- jsonwebtoken 9.0.3
+- cookie-parser 1.4.7
+- cors 2.8.5
+
+HTTP Client:
+- axios 1.13.2 (for WhatsApp API integration)
+
+Validation:
+- zod 4.3.2 (imported but not extensively used in current implementation)
+
+Environment:
+- dotenv 17.2.3
+
+================================================================================
+PROJECT STRUCTURE
+================================================================================
+
+Root Directory:
+├── src/                    # TypeScript source code
+│   ├── controllers/        # Request handlers
+│   │   ├── authController.ts     # Auth endpoints (send/verify OTP, me, logout)
+│   │   └── adminController.ts    # Admin dashboard (CORS management)
+│   ├── routes/             # Express route definitions
+│   │   ├── authRoutes.ts         # /auth/* endpoints
+│   │   └── adminRoutes.ts        # /admin/* endpoints
+│   ├── middleware/         # Express middleware
+│   │   └── authMiddleware.ts     # JWT verification, admin check, logging
+│   ├── db/                 # Database configuration
+│   │   └── index.ts              # PostgreSQL pool setup with SSL
+│   └── index.ts            # Main Express application entry point
+├── public/                 # Static files served by Express
+│   ├── login.html          # Login page UI
+│   ├── admin.html          # Admin dashboard UI
+│   ├── docs.html           # Integration documentation
+│   ├── app.js              # Frontend JavaScript logic
+│   ├── style.css           # Styles for login page
+│   └── logo.png            # Eternalgy logo
+├── dist/                   # Compiled JavaScript (generated)
+├── docs/                   # Documentation (this directory)
+├── package.json            # Dependencies and scripts
+├── tsconfig.json           # TypeScript compiler configuration
+├── .env                    # Environment variables (NOT committed)
+└── README.md               # Basic project overview
+
+================================================================================
+DATABASE SCHEMA
+================================================================================
+
+The service uses a shared PostgreSQL database with the following tables:
+
+1. USER TABLE ("user")
+   - id: SERIAL PRIMARY KEY
+   - linked_agent_profile: INTEGER (foreign key to agent.bubble_id)
+   - access_level: TEXT[] (array, can include 'admin', 'superadmin', etc.)
+   - created_at: TIMESTAMP
+   - updated_at: TIMESTAMP
+
+2. AGENT TABLE (agent)
+   - bubble_id: INTEGER (unique identifier)
+   - name: TEXT
+   - contact: TEXT (phone number, format: 0123456789)
+   - ... (other fields not directly used by auth service)
+
+3. AUTH_HUB_OTPS TABLE
+   - phone_number: VARCHAR(20) PRIMARY KEY
+   - code: VARCHAR(6) NOT NULL (6-digit OTP)
+   - expires_at: TIMESTAMP NOT NULL (NOW() + 5 minutes)
+
+4. AUTH_HUB_CORS_ORIGINS TABLE
+   - origin: TEXT PRIMARY KEY (e.g., "https://calculator.atap.solar")
+   - created_at: TIMESTAMP DEFAULT NOW()
+
+Important: User lookup is done by joining "user" and "agent" tables:
+- Agent.contact stores phone number in local format (0123456789)
+- User.linked_agent_profile = Agent.bubble_id
+- This ensures strict "invite-only" authentication
+
+================================================================================
+ENVIRONMENT VARIABLES
+================================================================================
+
+Required variables (.env file):
+
+1. PORT=3000
+   - Port for Express server to listen on
+   - Default: 3000 if not specified
+
+2. DATABASE_URL="postgresql://user:pass@host:port/dbname"
+   - PostgreSQL connection string
+   - Must be same across all *.atap.solar services
+
+3. JWT_SECRET="complex_secret_key"
+   - Secret key for signing JWT tokens
+   - MUST be identical across all applications sharing the auth cookie
+   - Should be cryptographically secure
+
+4. WHATSAPP_API_URL="https://whatsapp-api-server-production-c15f.up.railway.app"
+   - URL of internal WhatsApp API service
+   - Used for sending OTP messages
+   - Expected to support: GET /api/status, POST /api/send
+
+5. COOKIE_DOMAIN=".atap.solar"
+   - Domain scope for auth_token cookie
+   - Leading dot (.atap.solar) allows sharing across subdomains
+   - Required for SSO functionality
+
+Security Note: .env file is in .gitignore and should never be committed
+
+================================================================================
+AUTHENTICATION FLOW
+================================================================================
+
+STEP 1: SEND OTP
+Endpoint: POST /auth/send-otp
+Request Body: { "phoneNumber": "0123456789" }
+
+Flow:
+1. Sanitize input: Remove all non-digit characters
+2. Convert to local format: Ensures phone number starts with '0'
+3. Check user exists:
+   - Query: SELECT u.id, a.name FROM "user" u JOIN agent a ON u.linked_agent_profile = a.bubble_id WHERE a.contact = $1
+   - If no user found: Return 403 Forbidden ("Access Denied: Number not registered")
+   - This is the "invite-only" security gate
+4. Generate OTP: 6-digit random number (100000-999999)
+5. Store OTP in PostgreSQL:
+   - Table: auth_hub_otps
+   - Expires: NOW() + 5 minutes
+   - Upsert: ON CONFLICT (phone_number) DO UPDATE
+6. Send via WhatsApp API:
+   - Convert to international format: Replace leading '0' with '60'
+   - POST to {WHATSAPP_API_URL}/api/send
+   - Body: { "to": "60123456789", "message": "Your Atap.solar verification code is: 123456" }
+7. Return 200 OK { "message": "OTP sent" }
+
+Error Handling:
+- 400: Missing phone number
+- 403: Phone number not registered
+- 503: WhatsApp API failure
+
+STEP 2: VERIFY OTP & LOGIN
+Endpoint: POST /auth/verify-otp
+Request Body: { "phoneNumber": "0123456789", "code": "123456" }
+
+Flow:
+1. Sanitize phone number (same as Step 1)
+2. Verify OTP:
+   - Query: SELECT * FROM auth_hub_otps WHERE phone_number = $1 AND code = $2 AND expires_at > NOW()
+   - If not found or expired: Return 400 Bad Request ("Invalid or expired OTP")
+3. Fetch user details:
+   - Query: SELECT u.id, u.access_level, a.name, a.contact FROM "user" u JOIN agent a ON u.linked_agent_profile = a.bubble_id WHERE a.contact = $1
+   - Check access_level array for 'admin' or 'superadmin' to determine isAdmin flag
+4. Generate JWT:
+   - Payload: { userId: user.id, phone: localPhone, role: 'user', isAdmin: boolean, name: user.name }
+   - Secret: process.env.JWT_SECRET
+   - Expiry: 14 days
+5. Set HTTPOnly cookie:
+   - Name: auth_token
+   - Domain: .atap.solar (with leading dot for subdomain sharing)
+   - Path: /
+   - HttpOnly: true (prevents XSS)
+   - Secure: true (HTTPS only)
+   - SameSite: lax (allows subdomain navigation)
+   - MaxAge: 14 days (in milliseconds)
+6. Cleanup: Delete used OTP from database
+7. Return 200 OK { "success": true, "user": { id, name, phone, isAdmin } }
+
+STEP 3: GET CURRENT USER
+Endpoint: GET /auth/me
+Requirements: auth_token cookie must be present and valid
+
+Flow (handled by middleware):
+1. Extract auth_token from cookies
+2. Verify JWT signature using JWT_SECRET
+3. Decode payload to get user info
+4. Return user object from JWT payload
+
+STEP 4: LOGOUT
+Endpoint: POST /auth/logout
+Flow:
+1. Clear auth_token cookie:
+   - Domain: .atap.solar
+   - Path: /
+2. Return 200 OK { "message": "Logged out" }
+
+================================================================================
+MIDDLEWARE
+================================================================================
+
+Located in: src/middleware/authMiddleware.ts
+
+1. REQUIREAUTH MIDDLEWARE
+   Purpose: Protect routes by verifying JWT token
+   Usage: router.get('/protected', requireAuth, handler)
+   Flow:
+   - Extract auth_token from req.cookies
+   - If missing: Return 401 Unauthorized
+   - Verify token using JWT_SECRET
+   - If invalid: Return 401 Unauthorized
+   - Attach decoded user to req.user
+   - Call next()
+
+2. REQUIREADMIN MIDDLEWARE (in adminRoutes.ts)
+   Purpose: Restrict routes to admin users only
+   Usage: After requireAuth, before route handler
+   Flow:
+   - Check if req.user.isAdmin is true
+   - If false: Return 403 Forbidden
+   - Call next()
+
+3. LOGGER MIDDLEWARE
+   Purpose: Log all incoming requests
+   Usage: Applied globally in index.ts
+   Output: console.log(`${req.method} ${req.url}`)
+
+================================================================================
+ADMIN DASHBOARD
+================================================================================
+
+Located in: src/controllers/adminController.ts, src/routes/adminRoutes.ts, public/admin.html
+
+Purpose: Manage CORS allowed origins for the Auth Hub
+
+Endpoints (all require authentication + admin role):
+
+1. GET /admin/dashboard
+   - Renders admin.html dashboard UI
+
+2. GET /admin/origins
+   - Returns list of allowed origins
+   - Query: SELECT origin FROM auth_hub_cors_origins ORDER BY created_at DESC
+   - Response: { "origins": ["https://app1.atap.solar", "https://app2.atap.solar"] }
+
+3. POST /admin/origins
+   - Adds new allowed origin
+   - Body: { "origin": "https://subdomain.atap.solar" }
+   - Validation: Must start with "http"
+   - Query: INSERT INTO auth_hub_cors_origins (origin, created_at) VALUES ($1, NOW()) ON CONFLICT DO NOTHING
+   - Response: { "message": "Origin added" }
+
+4. DELETE /admin/origins
+   - Removes allowed origin
+   - Body: { "origin": "https://subdomain.atap.solar" }
+   - Query: DELETE FROM auth_hub_cors_origins WHERE origin = $1
+   - Response: { "message": "Origin removed" }
+
+================================================================================
+CORS CONFIGURATION
+================================================================================
+
+Located in: src/index.ts
+
+Dynamic CORS Origins:
+- Origins are loaded from database (auth_hub_cors_origins table)
+- Cached for 10 seconds to reduce database queries
+- Allows credentials (cookies) to be sent
+
+CORS Configuration:
+- origin: Async function checking against allowed origins
+- credentials: true (required for cookie-based auth)
+- methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+- allowedHeaders: ['Content-Type', 'Authorization']
+
+Important: All client applications must have their origin added to the database
+to make API requests with credentials.
+
+================================================================================
+MAIN APPLICATION (index.ts)
+================================================================================
+
+Express Server Setup:
+
+1. Import dependencies:
+   - express, cors, cookie-parser, dotenv
+   - Route modules (authRoutes, adminRoutes)
+   - Database query function
+
+2. Configure environment variables via dotenv
+
+3. Set up CORS with dynamic origin checking (10-second cache)
+
+4. Middleware chain:
+   - logger (log all requests)
+   - express.static (serve public folder)
+   - cors (cross-origin configuration)
+   - express.json (parse JSON bodies)
+   - cookieParser (parse cookies)
+
+5. Routes:
+   - /auth/* -> authRoutes (authentication endpoints)
+   - /admin/* -> adminRoutes (admin dashboard)
+   - GET /health -> { "status": "ok" }
+   - GET /docs -> serve docs.html
+   - GET / -> serve login.html (root route)
+
+6. Start server on PORT
+
+================================================================================
+FRONTEND
+================================================================================
+
+LOGIN PAGE (public/login.html + public/app.js):
+
+Two-step authentication flow:
+
+Step 1: Phone Number Input
+- User enters phone number (digits only, country code prefixed)
+- Validation: Must be numeric
+- On submit: POST /auth/send-otp
+- Success: Transition to Step 2, display phone number
+- Error (403): "WhatsApp number not registered"
+- Error (other): Display error message
+
+Step 2: OTP Verification
+- User receives 6-digit OTP via WhatsApp
+- User enters OTP code
+- On submit: POST /auth/verify-otp
+- Success: Redirect based on user role:
+  - If return_to query param present: redirect there
+  - If user.isAdmin: redirect to /admin/dashboard
+  - Otherwise: redirect to /docs
+- Error: Display error message
+
+Features:
+- Loading states (button disabled, text changed)
+- Enter key support
+- Back button to change phone number
+- Responsive design
+
+ADMIN DASHBOARD (public/admin.html):
+
+Simple UI for managing CORS origins:
+- Input field to add new origin
+- List of current origins
+- Remove button for each origin
+- Auto-refresh after add/remove
+- Success/error messages (auto-hide after 3 seconds)
+
+DOCUMENTATION PAGE (public/docs.html):
+
+Integration guide for client applications:
+- Authentication flow explanation
+- Middleware example (Node.js/Express)
+- Logout handling
+- CORS & AJAX usage
+- Credential requirements
+
+STYLES (public/style.css):
+
+Modern, minimalist design:
+- CSS variables for theming
+- Flexbox layout
+- Responsive mobile-first approach
+- Animations (fade in)
+- Custom input styling
+- Loading states
+
+================================================================================
+PHONE NUMBER FORMATTING
+================================================================================
+
+The service handles multiple phone number formats:
+
+Helper Functions (authController.ts):
+
+1. sanitizePhone(phone: string)
+   - Removes all non-digit characters
+   - Example: "+60-12-345-6789" -> "60123456789"
+
+2. toLocalFormat(phone: string)
+   - Converts to local format (starts with '0')
+   - If starts with '60': Removes '60', prepends '0' (6012 -> 012)
+   - If starts with '0': Keeps as is (012 -> 012)
+   - Otherwise: Prepends '0' (123456789 -> 0123456789)
+
+Storage & Usage:
+- Database (agent.contact): Local format (0123456789)
+- WhatsApp API: International format (60123456789)
+- OTP Storage: Sanitized format (60123456789 or 0123456789)
+
+Important: When sending to WhatsApp, convert local format (012...) to international (6012...)
+
+================================================================================
+JWT TOKEN STRUCTURE
+================================================================================
+
+Header:
+- alg: HS256
+- typ: JWT
+
+Payload:
+{
+  userId: number,        // User ID from database
+  phone: string,         // Phone number in local format (0123456789)
+  role: string,          // Always 'user' currently
+  isAdmin: boolean,       // Derived from access_level array
+  name: string,          // Agent name
+  iat: number,           // Issued at timestamp
+  exp: number           // Expiration timestamp (14 days)
+}
+
+Verification:
+- Uses JWT_SECRET from environment
+- 14-day expiration
+- Attached to req.user by requireAuth middleware
+
+================================================================================
+SECURITY CONSIDERATIONS
+================================================================================
+
+1. INVITE-ONLY SYSTEM
+   - Users can only authenticate if phone number exists in agent table
+   - 403 Forbidden for unregistered numbers
+   - This prevents public registration
+
+2. COOKIE SECURITY
+   - HttpOnly: Prevents JavaScript access (XSS protection)
+   - Secure: HTTPS only
+   - SameSite: Lax (allows subdomain navigation, but prevents CSRF from other sites)
+   - Domain: .atap.solar (wildcard for SSO)
+
+3. JWT SECURITY
+   - Secret key must be identical across all services
+   - 14-day expiration balances security and UX
+   - Tokens invalidated on logout (cookie cleared)
+
+4. OTP SECURITY
+   - 6-digit random number (100000-999999)
+   - 5-minute expiration
+   - Deleted after successful verification
+   - Database storage (no Redis dependency)
+
+5. CORS SECURITY
+   - Dynamic origin checking from database
+   - Credentials enabled only for allowed origins
+   - Prevents unauthorized cross-origin requests
+
+6. DATABASE SECURITY
+   - SSL enabled (rejectUnauthorized: false for Railway proxy)
+   - Parameterized queries prevent SQL injection
+   - Environment variables keep credentials secret
+
+7. WHATSAPP API
+   - Internal service, not exposed publicly
+   - No API key in current implementation
+   - Consider adding for production security
+
+================================================================================
+CLIENT APPLICATION INTEGRATION
+================================================================================
+
+To integrate a client application with this auth service:
+
+1. SET ENVIRONMENT VARIABLES
+   Ensure the client app has:
+   - JWT_SECRET (same as auth service)
+   - AUTH_URL=https://auth.atap.solar
+
+2. CREATE AUTH MIDDLEWARE (Node.js/Express example):
+
+   import jwt from 'jsonwebtoken';
+
+   const requireAuth = (req, res, next) => {
+       const token = req.cookies.auth_token;
+
+       if (!token) {
+           const returnTo = encodeURIComponent(req.protocol + '://' + req.get('host') + req.originalUrl);
+           return res.redirect(`https://auth.atap.solar/?return_to=${returnTo}`);
+       }
+
+       try {
+           const decoded = jwt.verify(token, process.env.JWT_SECRET);
+           req.user = decoded;
+           next();
+       } catch (err) {
+           return res.redirect(`https://auth.atap.solar/?return_to=${encodeURIComponent(req.originalUrl)}`);
+       }
+   };
+
+3. ADD ORIGIN TO AUTH HUB
+   - Access https://auth.atap.solar/admin/dashboard
+   - Add your application's origin (e.g., https://calculator.atap.solar)
+   - Required for AJAX requests with credentials
+
+4. HANDLE AJAX REQUESTS
+
+   fetch('https://auth.atap.solar/auth/me', {
+       credentials: 'include'  // Important: sends auth_token cookie
+   })
+   .then(res => res.json())
+   .then(data => console.log(data.user));
+
+5. HANDLE LOGOUT
+   Option A - Redirect to auth service:
+   window.location.href = 'https://auth.atap.solar/auth/logout';
+
+   Option B - Clear cookie locally:
+   res.clearCookie('auth_token', {
+       domain: '.atap.solar',
+       path: '/'
+   });
+   res.redirect('/login');
+
+================================================================================
+API ENDPOINTS REFERENCE
+================================================================================
+
+PUBLIC ENDPOINTS:
+
+POST /auth/send-otp
+  Body: { "phoneNumber": "0123456789" }
+  Response: 200 { "message": "OTP sent" }
+  Error: 400 { "error": "Phone number is required" }
+  Error: 403 { "error": "Access Denied: Number not registered" }
+  Error: 503 { "error": "Failed to send OTP via WhatsApp" }
+
+POST /auth/verify-otp
+  Body: { "phoneNumber": "0123456789", "code": "123456" }
+  Response: 200 { "success": true, "user": { id, name, phone, isAdmin } }
+  Sets: auth_token cookie (HttpOnly, Secure, Domain: .atap.solar, 14 days)
+  Error: 400 { "error": "Invalid or expired OTP" }
+  Error: 403 { "error": "User not found" }
+
+GET /auth/me
+  Headers: Cookie: auth_token=...
+  Response: 200 { "user": { userId, phone, role, isAdmin, name } }
+  Error: 401 { "error": "Unauthorized: No token provided" }
+  Error: 401 { "error": "Unauthorized: Invalid token" }
+
+POST /auth/logout
+  Clears: auth_token cookie
+  Response: 200 { "message": "Logged out" }
+
+GET /health
+  Response: 200 { "status": "ok" }
+
+GET /docs
+  Response: HTML documentation page
+
+GET /
+  Response: HTML login page
+
+ADMIN ENDPOINTS (require authentication + admin role):
+
+GET /admin/dashboard
+  Response: HTML admin dashboard
+
+GET /admin/origins
+  Response: 200 { "origins": ["https://example.com"] }
+
+POST /admin/origins
+  Body: { "origin": "https://example.com" }
+  Response: 200 { "message": "Origin added" }
+  Error: 400 { "error": "Valid URL origin required (e.g. https://example.com)" }
+
+DELETE /admin/origins
+  Body: { "origin": "https://example.com" }
+  Response: 200 { "message": "Origin removed" }
+
+================================================================================
+DEVELOPMENT WORKFLOW
+================================================================================
+
+INSTALL DEPENDENCIES:
+  npm install
+
+RUN IN DEVELOPMENT MODE:
+  npm run dev
+  - Uses ts-node-dev for hot reloading
+  - Transpiles TypeScript on-the-fly
+  - Watch mode with auto-restart
+
+BUILD FOR PRODUCTION:
+  npm run build
+  - Compiles TypeScript to JavaScript
+  - Output: dist/ directory
+  - Uses tsconfig.json configuration
+
+START PRODUCTION SERVER:
+  npm start
+  - Runs compiled JavaScript from dist/
+  - Requires build step first
+
+CURRENT STATUS:
+  No test script configured
+  npm test returns error
+
+================================================================================
+TYPESCRIPT CONFIGURATION
+================================================================================
+
+File: tsconfig.json
+
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "commonjs",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules"]
+}
+
+Configuration Details:
+- Target: ES2020 (modern JavaScript features)
+- Module: CommonJS (Node.js compatible)
+- Output: dist/ directory
+- Strict mode enabled (type safety)
+- Interop enabled for ES modules
+
+================================================================================
+DEPLOYMENT
+================================================================================
+
+Platform: Railway
+
+Current Environment:
+- Port: 3000
+- Database: PostgreSQL (shared)
+- WhatsApp API: https://whatsapp-api-server-production-c15f.up.railway.app
+- Domain: .atap.solar
+
+Deployment Notes:
+- .env file must be configured in Railway dashboard
+- JWT_SECRET must match across all services
+- Database SSL is disabled for Railway proxy (rejectUnauthorized: false)
+- Static files served from dist/public/ in production
+
+Build Command (Railway):
+  npm run build
+
+Start Command (Railway):
+  npm start
+
+================================================================================
+KNOWN ISSUES & LIMITATIONS
+================================================================================
+
+1. NO RATE LIMITING
+   - OTP send endpoint has no rate limiting
+   - Could be abused to spam WhatsApp messages
+   - Recommendation: Add rate limiting middleware
+
+2. NO OTP RESEND LOGIC
+   - User cannot request new OTP without waiting or explicit resend
+   - Current implementation replaces existing OTP
+   - Consider adding cooldown period
+
+3. NO PASSWORD RESET
+   - WhatsApp OTP is the only auth method
+   - No password to reset
+   - Issue if user loses access to WhatsApp
+
+4. NO SESSION INVALIDATION
+   - JWT cannot be revoked before expiration
+   - Logout only clears client cookie
+   - Token remains valid for 14 days
+   - Consider adding token blacklist/refresh mechanism
+
+5. ZOD IMPORTED BUT NOT USED
+   - zod is in dependencies but not utilized
+   - Could add input validation schemas
+
+6. NO LOGGING SYSTEM
+   - Only console.log for request logging
+   - No structured logging
+   - No error tracking (e.g., Sentry)
+   - No log rotation
+
+7. NO TESTS
+   - No unit tests
+   - No integration tests
+   - No E2E tests
+
+8. DATABASE QUERY OPTIMIZATION
+   - User lookup happens twice (send-otp, verify-otp)
+   - Could be optimized with caching
+   - Indexes not documented
+
+9. CORS CACHE HARDCODED
+   - 10-second cache is hardcoded
+   - Could be configurable via environment variable
+
+10. NO INPUT SANITIZATION FOR ORIGIN
+    - Admin addOrigin trims whitespace but no strict validation
+    - Should validate proper URL format more thoroughly
+
+================================================================================
+FUTURE ENHANCEMENTS
+================================================================================
+
+1. RATE LIMITING
+   - Implement rate limiting for /auth/send-otp
+   - Prevent OTP spam
+   - Library suggestion: express-rate-limit
+
+2. TOKEN REFRESH MECHANISM
+   - Add refresh tokens with shorter access token expiry
+   - Allow secure token rotation
+   - Improve security posture
+
+3. AUDIT LOGGING
+   - Log authentication attempts
+   - Track successful/failed logins
+   - Admin dashboard view for activity
+
+4. TWO-FACTOR AUTHENTICATION (2FA)
+   - Add optional 2FA for admin users
+   - TOTP or backup codes
+
+5. MULTIPLE AUTH METHODS
+   - Support email/password as fallback
+   - Support social login (Google, etc.)
+
+6. IMPROVED ERROR HANDLING
+   - Custom error classes
+   - Better error messages
+   - Error response standardization
+
+7. API DOCUMENTATION
+   - Generate OpenAPI/Swagger spec
+   - Interactive API documentation
+
+8. HEALTH CHECKS
+   - Database connection health
+   - WhatsApp API health check (exists in build plan but not implemented)
+   - Readiness/liveness probes for Kubernetes
+
+9. CONFIGURATION MANAGEMENT
+   - Move hardcoded values to environment variables
+   - OTP expiry time
+   - JWT expiry time
+   - CORS cache duration
+
+10. MONITORING & ALERTING
+    - Application monitoring (e.g., New Relic, Datadog)
+    - Error tracking (Sentry)
+    - Uptime monitoring
+
+================================================================================
+FILES & LINE NUMBERS QUICK REFERENCE
+================================================================================
+
+src/index.ts
+  Line 10: dotenv.config()
+  Line 14: Express app initialization
+  Line 22-36: getAllowedOrigins() - Dynamic CORS with 10s cache
+  Line 38-53: CORS options configuration
+  Line 65: /auth routes mounted
+  Line 66: /admin routes mounted
+  Line 68-70: /health endpoint
+  Line 72-75: /docs endpoint
+  Line 77-80: Root route (login page)
+  Line 83-85: Server start
+
+src/controllers/authController.ts
+  Line 7-9: Environment variables
+  Line 12: sanitizePhone() helper
+  Line 15-24: toLocalFormat() helper
+  Line 26-90: sendOtp() handler
+  Line 34-35: Phone sanitization & conversion
+  Line 39-45: User lookup with agent join
+  Line 47-50: 403 if user not found
+  Line 53: OTP generation
+  Line 56-62: OTP storage with expiry
+  Line 68: WhatsApp number format conversion
+  Line 74-77: WhatsApp API call
+  Line 92-165: verifyOtp() handler
+  Line 99-102: OTP verification
+  Line 111-116: User lookup
+  Line 126-131: Admin role check
+  Line 134-144: JWT generation
+  Line 147-154: Cookie setting
+  Line 157: OTP cleanup
+  Line 167-175: me() handler
+  Line 177-183: logout() handler
+
+src/controllers/adminController.ts
+  Line 6-9: renderDashboard()
+  Line 12-20: getOrigins()
+  Line 23-41: addOrigin()
+  Line 26-29: Origin validation
+  Line 32-35: Database insert with ON CONFLICT
+  Line 44-58: removeOrigin()
+
+src/db/index.ts
+  Line 6-11: PostgreSQL pool configuration
+  Line 9: SSL settings
+  Line 13: query() export function
+
+src/middleware/authMiddleware.ts
+  Line 4: JWT_SECRET
+  Line 6-21: requireAuth() middleware
+  Line 7: Cookie extraction
+  Line 9-12: No token error
+  Line 14-17: Token verification
+  Line 23-26: logger() middleware
+
+src/routes/authRoutes.ts
+  Line 5: Router initialization
+  Line 7: POST /auth/send-otp
+  Line 8: POST /auth/verify-otp
+  Line 9: GET /auth/me (with requireAuth)
+  Line 10: POST /auth/logout
+
+src/routes/adminRoutes.ts
+  Line 5: Router initialization
+  Line 9-16: requireAdmin middleware
+  Line 18-19: Apply auth & admin middleware
+  Line 21: GET /admin/dashboard
+  Line 22: GET /admin/origins
+  Line 23: POST /admin/origins
+  Line 24: DELETE /admin/origins
+
+public/app.js
+  Line 1-9: DOM element references
+  Line 11: currentPhone variable
+  Line 14-22: showMessage() helper
+  Line 25-70: Send OTP button handler
+  Line 27-36: Phone validation
+  Line 43-47: API call
+  Line 51-56: Success transition
+  Line 58-62: Error handling
+  Line 73-120: Verify OTP button handler
+  Line 74-78: Code validation
+  Line 85-89: API call
+  Line 93-110: Success redirect logic
+  Line 112: Error handling
+  Line 123-127: Back button handler
+  Line 130-135: Enter key support
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================
+
+For questions or issues, refer to:
+- README.md for basic overview
+- build-plan.txt for original build specifications
+- /docs endpoint for client integration guide
