@@ -13,6 +13,9 @@ const sanitizePhone = (phone: string) => phone.replace(/\D/g, '');
 
 // Helper: Convert various formats to local '012...' format for DB search
 const toLocalFormat = (phone: string) => {
+  // If it starts with 65 (Singapore), return as-is for special handling
+  if (phone.startsWith('65')) return phone;
+  
   // If it starts with 60, remove 6 and ensure it starts with 0 (6012 -> 012)
   if (phone.startsWith('60')) return '0' + phone.slice(2);
   
@@ -33,16 +36,20 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 
     const cleanPhone = sanitizePhone(phoneNumber);
     const localPhone = toLocalFormat(cleanPhone);
-    const intlPhone = '60' + localPhone.substring(1); // 012... -> 6012...
+    
+    // Handle Singapore (+65) numbers: search for 65... format as well
+    const isSingapore = cleanPhone.startsWith('65');
+    const intlPhone = isSingapore ? cleanPhone : '60' + localPhone.substring(1);
+    const malaysiaLocalPhone = isSingapore ? '0' + cleanPhone.slice(2) : localPhone;
 
     // 1. Check if user exists (Join User -> Agent)
-    // Handle both local (012...) and international (6012...) formats
+    // Handle local (012...), Malaysia international (6012...), and Singapore (65...) formats
     const userResult = await query(
       `SELECT u.id, a.name
        FROM "user" u
        JOIN agent a ON u.linked_agent_profile = a.bubble_id
-       WHERE a.contact = $1 OR a.contact = $2`,
-      [localPhone, intlPhone]
+       WHERE a.contact = $1 OR a.contact = $2 OR a.contact = $3`,
+      [malaysiaLocalPhone, intlPhone, cleanPhone]
     );
 
     if (userResult.rows.length === 0) {
@@ -63,10 +70,9 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     );
 
     // 4. Send via WhatsApp API
-    // Ensure we send to 601... format. 
-    // localPhone is guaranteed to look like '012...' due to toLocalFormat()
-    // So we just replace the leading '0' with '60'.
-    const waTarget = '60' + localPhone.substring(1);
+    // For Malaysia: convert 012... to 6012...
+    // For Singapore: use as-is (65...)
+    const waTarget = isSingapore ? cleanPhone : '60' + localPhone.substring(1);
 
     // Remove trailing slash from ENV if present to avoid double slash issues
     const safeApiUrl = WA_API_URL?.replace(/\/$/, '');
@@ -108,14 +114,17 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     // 2. Get User Details
-    // Handle both local (012...) and international (6012...) formats
-    const intlPhone = '60' + localPhone.substring(1);
+    // Handle local (012...), Malaysia international (6012...), and Singapore (65...) formats
+    const isSingapore = cleanPhone.startsWith('65');
+    const intlPhone = isSingapore ? cleanPhone : '60' + localPhone.substring(1);
+    const malaysiaLocalPhone = isSingapore ? '0' + cleanPhone.slice(2) : localPhone;
+    
     const userResult = await query(
       `SELECT u.id, u.access_level, a.name, a.contact
        FROM "user" u
        JOIN agent a ON u.linked_agent_profile = a.bubble_id
-       WHERE a.contact = $1 OR a.contact = $2`,
-      [localPhone, intlPhone]
+       WHERE a.contact = $1 OR a.contact = $2 OR a.contact = $3`,
+      [malaysiaLocalPhone, intlPhone, cleanPhone]
     );
 
     if (userResult.rows.length === 0) {
