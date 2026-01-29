@@ -1,4 +1,5 @@
 const phoneInput = document.getElementById('phone');
+const countryCodeSelect = document.getElementById('country-code');
 const otpInput = document.getElementById('otp');
 const btnSend = document.getElementById('btn-send-otp');
 const btnVerify = document.getElementById('btn-verify-otp');
@@ -39,18 +40,21 @@ btnSend.addEventListener('click', async () => {
     btnSend.disabled = true;
     btnSend.textContent = 'Sending...';
 
+    const countryCode = countryCodeSelect.value;
+    const fullPhoneNumber = countryCode + phone;
+
     try {
         const res = await fetch('/auth/send-otp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phoneNumber: phone })
+            body: JSON.stringify({ phoneNumber: fullPhoneNumber })
         });
 
         const data = await res.json();
 
         if (res.ok) {
-            currentPhone = phone;
-            otpMessage.textContent = `Code sent to +60${phone}`;
+            currentPhone = fullPhoneNumber;
+            otpMessage.textContent = `Code sent to ${fullPhoneNumber}`;
             stepPhone.classList.remove('active');
             stepOtp.classList.add('active');
             otpInput.focus();

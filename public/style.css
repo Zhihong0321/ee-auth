@@ -132,7 +132,8 @@ label {
     border-bottom: 1px solid var(--primary-color);
 }
 
-.country-code {
+.country-code,
+.country-code-select {
     font-size: 1.25rem;
     font-weight: 400;
     color: var(--text-secondary);
