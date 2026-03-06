@@ -34,6 +34,34 @@ const buildInternationalPhone = (countryCode: string, localPhone: string) => {
   return `${countryCode}${digits}`;
 };
 
+const normalizeReferralLocalPhone = (countryCode: string, localPhone: string) => {
+  const digits = normalizeMobileDigits(localPhone);
+
+  if (!digits) return '';
+
+  if (countryCode === '60') {
+    return digits.startsWith('0') ? digits : `0${digits}`;
+  }
+
+  return digits;
+};
+
+const getReferralPhoneCandidates = (countryCode: string, localPhone: string) => {
+  const digits = normalizeMobileDigits(localPhone);
+  const candidates = new Set<string>();
+
+  if (!digits) return [];
+
+  candidates.add(digits);
+
+  if (countryCode === '60') {
+    candidates.add(digits.startsWith('0') ? digits.slice(1) : digits);
+    candidates.add(digits.startsWith('0') ? digits : `0${digits}`);
+  }
+
+  return Array.from(candidates).filter(Boolean);
+};
+
 const randomId = (prefix: string) => `${prefix}_${randomBytes(6).toString('hex')}`;
 
 const sendWhatsappOtp = async (to: string, otp: string) => {
@@ -69,22 +97,23 @@ const findEmployeeUserByPhone = async (cleanPhone: string) => {
   return { userResult, localPhone };
 };
 
-const findReferralByMobile = async (localPhone: string) => {
+const findReferralByMobile = async (countryCode: string, localPhone: string) => {
+  const candidates = getReferralPhoneCandidates(countryCode, localPhone);
+
   return query(
     `SELECT r.*
      FROM referral r
-     WHERE regexp_replace(coalesce(r.mobile_number, ''), '\D', '', 'g') = $1
+     WHERE regexp_replace(coalesce(r.mobile_number, ''), '\D', '', 'g') = ANY($1::text[])
      ORDER BY r.id ASC
      LIMIT 1`,
-    [normalizeMobileDigits(localPhone)]
+    [candidates]
   );
 };
 
-const createReferralProfile = async (localPhone: string) => {
+const createReferralProfile = async (countryCode: string, localPhone: string) => {
   const customerId = randomId('cust');
   const referralBubbleId = randomId('ref');
-  const normalizedLocalPhone = normalizeMobileDigits(localPhone);
-  const displayPhone = localPhone.startsWith('0') ? localPhone : `0${normalizedLocalPhone}`;
+  const displayPhone = normalizeReferralLocalPhone(countryCode, localPhone);
 
   await query(
     `INSERT INTO customer (customer_id, name, phone, lead_source, created_at, updated_at)
@@ -129,14 +158,14 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       if (!localPhone) {
         res.status(400).json({ error: 'Mobile number is required' });
         return;
-      }
+    }
 
       const cleanCountryCode = normalizeCountryCode(countryCode);
       const fullPhoneNumber = buildInternationalPhone(cleanCountryCode, localPhone);
-      let referralResult = await findReferralByMobile(localPhone);
+      let referralResult = await findReferralByMobile(cleanCountryCode, localPhone);
 
       if (referralResult.rows.length === 0) {
-        const createdReferral = await createReferralProfile(localPhone);
+        const createdReferral = await createReferralProfile(cleanCountryCode, localPhone);
         referralResult = { ...referralResult, rows: [createdReferral] } as typeof referralResult;
       }
 
@@ -213,6 +242,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       const localPhone = sanitizePhone(localPhoneNumber || phoneNumber || '');
       const cleanCountryCode = normalizeCountryCode(countryCode);
       const fullPhoneNumber = buildInternationalPhone(cleanCountryCode, localPhone);
+      const normalizedLocalPhone = normalizeReferralLocalPhone(cleanCountryCode, localPhone);
 
       const otpResult = await query(
         `SELECT * FROM auth_hub_otps WHERE phone_number = $1 AND code = $2 AND expires_at > NOW()`,
@@ -224,7 +254,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
-      const referralResult = await findReferralByMobile(localPhone);
+      const referralResult = await findReferralByMobile(cleanCountryCode, localPhone);
       if (referralResult.rows.length === 0) {
         res.status(403).json({ error: 'Referral profile not found' });
         return;
@@ -235,7 +265,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
         {
           referralId: referral.id,
           referralBubbleId: referral.bubble_id,
-          phone: localPhone,
+          phone: normalizedLocalPhone,
           fullPhone: fullPhoneNumber,
           role: 'referral',
           isAdmin: false,
@@ -262,7 +292,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
         user: {
           id: referral.id,
           name: referral.name,
-          phone: localPhone,
+          phone: normalizedLocalPhone,
           role: 'referral',
           authMode: 'referral'
         }
