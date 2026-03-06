@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard - Atap.solar</title>
     <style>
-        body { font-family: -apple-system, system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; }
+        body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 2rem; }
         h1 { border-bottom: 1px solid #ccc; padding-bottom: 0.5rem; }
         .card { border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px; margin-top: 1rem; }
         .input-group { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
@@ -13,25 +13,26 @@
         button { padding: 0.5rem 1rem; cursor: pointer; background: #000; color: #fff; border: none; }
         button.delete { background: #d9534f; margin-left: auto; }
         ul { list-style: none; padding: 0; }
-        li { display: flex; align-items: center; padding: 0.5rem; border-bottom: 1px solid #eee; }
+        li { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem; border-bottom: 1px solid #eee; word-break: break-all; }
         li:last-child { border-bottom: none; }
         .msg { padding: 1rem; margin-bottom: 1rem; border-radius: 4px; display: none; }
         .success { background: #d4edda; color: #155724; }
         .error { background: #f8d7da; color: #721c24; }
+        .hint { color: #555; margin-top: -0.25rem; }
     </style>
 </head>
 <body>
     <h1>Auth Hub Admin</h1>
-    
+
     <div id="msg" class="msg"></div>
 
     <div class="card">
         <h2>CORS Allowed Origins</h2>
         <p>Manage domains that are allowed to access the Auth API.</p>
-        
+
         <div class="input-group">
             <input type="url" id="new-origin" placeholder="https://subdomain.atap.solar">
-            <button id="btn-add">Add Origin</button>
+            <button id="btn-add-origin">Add Origin</button>
         </div>
 
         <ul id="origin-list">
@@ -39,10 +40,28 @@
         </ul>
     </div>
 
+    <div class="card">
+        <h2>Referral Auth Trigger URLs</h2>
+        <p>Only these exact `return_to` URLs will use Referral Auth. All other URLs keep employee login.</p>
+        <p class="hint">Example: `https://referral.atap.solar/dashboard`</p>
+
+        <div class="input-group">
+            <input type="url" id="new-referral-url" placeholder="https://referral.atap.solar/dashboard">
+            <button id="btn-add-referral-url">Add Referral URL</button>
+        </div>
+
+        <ul id="referral-url-list">
+            <li>Loading...</li>
+        </ul>
+    </div>
+
     <script>
-        const listEl = document.getElementById('origin-list');
-        const inputEl = document.getElementById('new-origin');
-        const btnAdd = document.getElementById('btn-add');
+        const originListEl = document.getElementById('origin-list');
+        const originInputEl = document.getElementById('new-origin');
+        const btnAddOrigin = document.getElementById('btn-add-origin');
+        const referralUrlListEl = document.getElementById('referral-url-list');
+        const referralUrlInputEl = document.getElementById('new-referral-url');
+        const btnAddReferralUrl = document.getElementById('btn-add-referral-url');
         const msgEl = document.getElementById('msg');
 
         function showMsg(text, type) {
@@ -52,48 +71,93 @@
             setTimeout(() => msgEl.style.display = 'none', 3000);
         }
 
-        async function fetchOrigins() {
-            try {
-                const res = await fetch('/admin/origins');
-                if (!res.ok) throw new Error('Failed to load');
-                const data = await res.json();
-                renderList(data.origins);
-            } catch (e) {
-                listEl.innerHTML = '<li style="color:red">Error loading origins</li>';
-            }
-        }
-
-        function renderList(origins) {
+        function renderList(listEl, items, deleteHandler, emptyText) {
             listEl.innerHTML = '';
-            origins.forEach(origin => {
+
+            if (!items.length) {
                 const li = document.createElement('li');
-                li.textContent = origin;
+                li.textContent = emptyText;
+                listEl.appendChild(li);
+                return;
+            }
+
+            items.forEach(item => {
+                const li = document.createElement('li');
+                const text = document.createElement('span');
+                text.textContent = item;
+                li.appendChild(text);
+
                 const delBtn = document.createElement('button');
                 delBtn.textContent = 'Remove';
                 delBtn.className = 'delete';
-                delBtn.onclick = () => deleteOrigin(origin);
+                delBtn.onclick = () => deleteHandler(item);
                 li.appendChild(delBtn);
                 listEl.appendChild(li);
             });
         }
 
+        async function fetchOrigins() {
+            try {
+                const res = await fetch('/admin/origins');
+                if (!res.ok) throw new Error('Failed to load');
+                const data = await res.json();
+                renderList(originListEl, data.origins, deleteOrigin, 'No origins configured.');
+            } catch (e) {
+                originListEl.innerHTML = '<li style="color:red">Error loading origins</li>';
+            }
+        }
+
+        async function fetchReferralUrls() {
+            try {
+                const res = await fetch('/admin/referral-auth-urls');
+                if (!res.ok) throw new Error('Failed to load');
+                const data = await res.json();
+                renderList(referralUrlListEl, data.urls, deleteReferralUrl, 'No referral auth URLs configured.');
+            } catch (e) {
+                referralUrlListEl.innerHTML = '<li style="color:red">Error loading referral auth URLs</li>';
+            }
+        }
+
         async function addOrigin() {
-            const origin = inputEl.value.trim();
+            const origin = originInputEl.value.trim();
             if (!origin) return;
 
             try {
                 const res = await fetch('/admin/origins', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ origin })
                 });
                 if (res.ok) {
                     showMsg('Origin added', 'success');
-                    inputEl.value = '';
+                    originInputEl.value = '';
                     fetchOrigins();
                 } else {
-                    const d = await res.json();
-                    showMsg(d.error, 'error');
+                    const data = await res.json();
+                    showMsg(data.error || 'Failed to add origin', 'error');
+                }
+            } catch (e) {
+                showMsg('Network error', 'error');
+            }
+        }
+
+        async function addReferralUrl() {
+            const url = referralUrlInputEl.value.trim();
+            if (!url) return;
+
+            try {
+                const res = await fetch('/admin/referral-auth-urls', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                if (res.ok) {
+                    showMsg('Referral auth URL added', 'success');
+                    referralUrlInputEl.value = '';
+                    fetchReferralUrls();
+                } else {
+                    const data = await res.json();
+                    showMsg(data.error || 'Failed to add referral auth URL', 'error');
                 }
             } catch (e) {
                 showMsg('Network error', 'error');
@@ -105,22 +169,43 @@
             try {
                 const res = await fetch('/admin/origins', {
                     method: 'DELETE',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ origin })
                 });
                 if (res.ok) {
                     showMsg('Origin removed', 'success');
                     fetchOrigins();
                 } else {
-                    showMsg('Failed to remove', 'error');
+                    showMsg('Failed to remove origin', 'error');
                 }
             } catch (e) {
                 showMsg('Network error', 'error');
             }
         }
 
-        btnAdd.addEventListener('click', addOrigin);
+        async function deleteReferralUrl(url) {
+            if (!confirm(`Remove ${url}?`)) return;
+            try {
+                const res = await fetch('/admin/referral-auth-urls', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                if (res.ok) {
+                    showMsg('Referral auth URL removed', 'success');
+                    fetchReferralUrls();
+                } else {
+                    showMsg('Failed to remove referral auth URL', 'error');
+                }
+            } catch (e) {
+                showMsg('Network error', 'error');
+            }
+        }
+
+        btnAddOrigin.addEventListener('click', addOrigin);
+        btnAddReferralUrl.addEventListener('click', addReferralUrl);
         fetchOrigins();
+        fetchReferralUrls();
     </script>
 </body>
 </html>

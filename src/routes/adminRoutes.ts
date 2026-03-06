@@ -1,5 +1,13 @@
 import { Router } from 'express';
-import { renderDashboard, getOrigins, addOrigin, removeOrigin } from '../controllers/adminController';
+import {
+    renderDashboard,
+    getOrigins,
+    addOrigin,
+    removeOrigin,
+    getReferralAuthUrlsController,
+    addReferralAuthUrl,
+    removeReferralAuthUrl
+} from '../controllers/adminController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { Request, Response, NextFunction } from 'express';
 
@@ -22,5 +30,8 @@ router.get('/dashboard', renderDashboard);
 router.get('/origins', getOrigins);
 router.post('/origins', addOrigin);
 router.delete('/origins', removeOrigin);
+router.get('/referral-auth-urls', getReferralAuthUrlsController);
+router.post('/referral-auth-urls', addReferralAuthUrl);
+router.delete('/referral-auth-urls', removeReferralAuthUrl);
 
 export default router;

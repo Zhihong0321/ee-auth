@@ -6,6 +6,7 @@ import authRoutes from './routes/authRoutes';
 import adminRoutes from './routes/adminRoutes';
 import { logger } from './middleware/authMiddleware';
 import { query } from './db';
+import { ensureReferralAuthSchema } from './utils/referralAuth';
 
 dotenv.config();
 
@@ -80,6 +81,14 @@ app.get('/', (req, res) => {
 });
 
 // Start Server
-app.listen(PORT, () => {
-    console.log(`Auth Service running on port ${PORT}`);
+const startServer = async () => {
+    await ensureReferralAuthSchema();
+    app.listen(PORT, () => {
+        console.log(`Auth Service running on port ${PORT}`);
+    });
+};
+
+startServer().catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
 });

@@ -8,10 +8,18 @@ const stepPhone = document.getElementById('step-phone');
 const stepOtp = document.getElementById('step-otp');
 const messageBox = document.getElementById('message-box');
 const otpMessage = document.getElementById('otp-message');
+const companyName = document.getElementById('company-name');
+const loginHeading = document.getElementById('login-heading');
+const loginSubtitle = document.getElementById('login-subtitle');
 
 let currentPhone = '';
+let currentLocalPhone = '';
+let currentCountryCode = '';
+let authMode = 'employee';
 
-// Helper to show message
+const params = new URLSearchParams(window.location.search);
+const returnTo = params.get('return_to');
+
 function showMessage(text, type = 'success') {
     messageBox.textContent = text;
     messageBox.className = type;
@@ -22,7 +30,31 @@ function hideMessage() {
     messageBox.classList.add('hidden');
 }
 
-// Step 1: Send OTP
+function applyAuthContext(context) {
+    authMode = context.mode || 'employee';
+
+    if (context.isReferralAuth) {
+        document.title = context.pageTitle || 'ETERNALGY REFERRAL LOGIN';
+        companyName.textContent = context.loginTitle || 'ETERNALGY REFERRAL LOGIN';
+        loginHeading.textContent = 'ETERNALGY REFERRAL LOGIN';
+        loginSubtitle.textContent = 'Enter your referral mobile number to receive a WhatsApp OTP.';
+        btnVerify.textContent = 'Verify & Login';
+    }
+}
+
+async function loadAuthContext() {
+    if (!returnTo) return;
+
+    try {
+        const res = await fetch(`/auth/context?return_to=${encodeURIComponent(returnTo)}`);
+        if (!res.ok) return;
+        const context = await res.json();
+        applyAuthContext(context);
+    } catch (err) {
+        console.error('Failed to load auth context', err);
+    }
+}
+
 btnSend.addEventListener('click', async () => {
     const phone = phoneInput.value.trim();
     if (!phone) {
@@ -30,7 +62,6 @@ btnSend.addEventListener('click', async () => {
         return;
     }
 
-    // Basic client-side validation (ensure digits)
     if (!/^\d+$/.test(phone)) {
         showMessage('Please enter numbers only.', 'error');
         return;
@@ -41,25 +72,33 @@ btnSend.addEventListener('click', async () => {
     btnSend.textContent = 'Sending...';
 
     const countryCode = countryCodeSelect.value;
-    const fullPhoneNumber = countryCode + phone;
+    const cleanCountryCode = countryCode.replace(/\D/g, '');
+    const fullPhoneNumber = `${cleanCountryCode}${phone.replace(/^0+/, '')}`;
 
     try {
         const res = await fetch('/auth/send-otp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phoneNumber: fullPhoneNumber })
+            body: JSON.stringify({
+                phoneNumber: fullPhoneNumber,
+                localPhoneNumber: phone,
+                countryCode,
+                returnTo
+            })
         });
 
         const data = await res.json();
 
         if (res.ok) {
             currentPhone = fullPhoneNumber;
-            otpMessage.textContent = `Code sent to ${fullPhoneNumber}`;
+            currentLocalPhone = phone;
+            currentCountryCode = countryCode;
+            otpMessage.textContent = `Code sent to ${countryCode}${phone}`;
             stepPhone.classList.remove('active');
             stepOtp.classList.add('active');
             otpInput.focus();
         } else {
-            if (res.status === 403) {
+            if (res.status === 403 && authMode !== 'referral') {
                 showMessage('WhatsApp number not registered.', 'error');
             } else {
                 showMessage(data.error || 'Failed to send code.', 'error');
@@ -73,7 +112,6 @@ btnSend.addEventListener('click', async () => {
     }
 });
 
-// Step 2: Verify OTP
 btnVerify.addEventListener('click', async () => {
     const code = otpInput.value.trim();
     if (!code) {
@@ -89,26 +127,26 @@ btnVerify.addEventListener('click', async () => {
         const res = await fetch('/auth/verify-otp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phoneNumber: currentPhone, code })
+            body: JSON.stringify({
+                phoneNumber: currentPhone,
+                localPhoneNumber: currentLocalPhone,
+                countryCode: currentCountryCode,
+                code,
+                returnTo
+            })
         });
 
         const data = await res.json();
 
         if (res.ok) {
             showMessage('Authentication successful! Redirecting...', 'success');
-            
-            // Handle Redirect
-            const params = new URLSearchParams(window.location.search);
-            const returnTo = params.get('return_to');
-            
+
             setTimeout(() => {
                 if (returnTo) {
                     window.location.href = decodeURIComponent(returnTo);
                 } else if (data.user && data.user.isAdmin) {
-                    // Admin Fallback
                     window.location.href = '/admin/dashboard';
                 } else {
-                    // Standard User Fallback
                     window.location.href = '/docs';
                 }
             }, 1000);
@@ -119,21 +157,22 @@ btnVerify.addEventListener('click', async () => {
         showMessage('Network error. Please try again.', 'error');
     } finally {
         btnVerify.disabled = false;
-        btnVerify.textContent = 'Login';
+        btnVerify.textContent = 'Verify & Login';
     }
 });
 
-// Back Button
 btnBack.addEventListener('click', () => {
     stepOtp.classList.remove('active');
     stepPhone.classList.add('active');
     hideMessage();
 });
 
-// Enter key support
 phoneInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') btnSend.click();
 });
+
 otpInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') btnVerify.click();
 });
+
+loadAuthContext();
