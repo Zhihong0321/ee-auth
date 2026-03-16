@@ -8,6 +8,7 @@ import { isReferralAuthReturnTo, normalizeMobileDigits } from '../utils/referral
 const JWT_SECRET = process.env.JWT_SECRET || 'default_secret';
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || '.atap.solar';
 const WA_API_URL = process.env.WHATSAPP_API_URL;
+const WHATSAPP_TIMEOUT_MS = Number(process.env.WHATSAPP_TIMEOUT_MS || 15000);
 
 const sanitizePhone = (phone: string) => phone.replace(/\D/g, '');
 
@@ -66,10 +67,35 @@ const randomId = (prefix: string) => `${prefix}_${randomBytes(6).toString('hex')
 
 const sendWhatsappOtp = async (to: string, otp: string) => {
   const safeApiUrl = WA_API_URL?.replace(/\/$/, '');
-  await axios.post(`${safeApiUrl}/api/send`, {
-    to,
-    message: `Your Atap.solar verification code is: ${otp}`
-  });
+
+  if (!safeApiUrl) {
+    throw new Error('WHATSAPP_API_URL is not configured');
+  }
+
+  await axios.post(
+    `${safeApiUrl}/api/send`,
+    {
+      to,
+      message: `Your Atap.solar verification code is: ${otp}`
+    },
+    {
+      timeout: WHATSAPP_TIMEOUT_MS
+    }
+  );
+};
+
+const respondWhatsappError = (res: Response, error: unknown) => {
+  if (axios.isAxiosError(error)) {
+    if (error.code === 'ECONNABORTED') {
+      res.status(504).json({ error: 'WhatsApp service timed out. Please try again.' });
+      return;
+    }
+
+    res.status(503).json({ error: 'Failed to send OTP via WhatsApp' });
+    return;
+  }
+
+  res.status(503).json({ error: 'Failed to send OTP via WhatsApp' });
 };
 
 const resolveAuthMode = async (returnTo?: string) => {
@@ -183,7 +209,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
         await sendWhatsappOtp(fullPhoneNumber, otp);
       } catch (apiError) {
         console.error('WhatsApp API Error:', apiError);
-        res.status(503).json({ error: 'Failed to send OTP via WhatsApp' });
+        respondWhatsappError(res, apiError);
         return;
       }
 
@@ -222,7 +248,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       await sendWhatsappOtp(waTarget, otp);
     } catch (apiError) {
       console.error('WhatsApp API Error:', apiError);
-      res.status(503).json({ error: 'Failed to send OTP via WhatsApp' });
+      respondWhatsappError(res, apiError);
       return;
     }
 

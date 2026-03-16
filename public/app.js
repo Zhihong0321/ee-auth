@@ -16,6 +16,7 @@ let currentPhone = '';
 let currentLocalPhone = '';
 let currentCountryCode = '';
 let authMode = 'employee';
+const REQUEST_TIMEOUT_MS = 20000;
 
 const params = new URLSearchParams(window.location.search);
 const returnTo = params.get('return_to');
@@ -28,6 +29,20 @@ function showMessage(text, type = 'success') {
 
 function hideMessage() {
     messageBox.classList.add('hidden');
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 function applyAuthContext(context) {
@@ -76,7 +91,7 @@ btnSend.addEventListener('click', async () => {
     const fullPhoneNumber = `${cleanCountryCode}${phone.replace(/^0+/, '')}`;
 
     try {
-        const res = await fetch('/auth/send-otp', {
+        const res = await fetchWithTimeout('/auth/send-otp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -105,10 +120,14 @@ btnSend.addEventListener('click', async () => {
             }
         }
     } catch (err) {
-        showMessage('Network error. Please try again.', 'error');
+        if (err.name === 'AbortError') {
+            showMessage('Request timed out. Please try again.', 'error');
+        } else {
+            showMessage('Network error. Please try again.', 'error');
+        }
     } finally {
         btnSend.disabled = false;
-        btnSend.textContent = 'Send Verification Code';
+        btnSend.textContent = 'Continue';
     }
 });
 
@@ -124,7 +143,7 @@ btnVerify.addEventListener('click', async () => {
     btnVerify.textContent = 'Verifying...';
 
     try {
-        const res = await fetch('/auth/verify-otp', {
+        const res = await fetchWithTimeout('/auth/verify-otp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -154,7 +173,11 @@ btnVerify.addEventListener('click', async () => {
             showMessage(data.error || 'Invalid code.', 'error');
         }
     } catch (err) {
-        showMessage('Network error. Please try again.', 'error');
+        if (err.name === 'AbortError') {
+            showMessage('Request timed out. Please try again.', 'error');
+        } else {
+            showMessage('Network error. Please try again.', 'error');
+        }
     } finally {
         btnVerify.disabled = false;
         btnVerify.textContent = 'Verify & Login';
