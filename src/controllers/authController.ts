@@ -10,6 +10,7 @@ const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || '.atap.solar';
 const WA_API_URL = process.env.WHATSAPP_API_URL;
 const WHATSAPP_SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'eternalgy-auth';
 const WHATSAPP_TIMEOUT_MS = Number(process.env.WHATSAPP_TIMEOUT_MS || 15000);
+const WHATSAPP_SESSION_RETRY_DELAY_MS = Number(process.env.WHATSAPP_SESSION_RETRY_DELAY_MS || 1500);
 
 const sanitizePhone = (phone: string) => phone.replace(/\D/g, '');
 
@@ -66,12 +67,88 @@ const getReferralPhoneCandidates = (countryCode: string, localPhone: string) => 
 
 const randomId = (prefix: string) => `${prefix}_${randomBytes(6).toString('hex')}`;
 
+type WhatsappSessionStatus = {
+  status?: string;
+  error?: string | null;
+  message?: string | null;
+  qr?: string | null;
+};
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getWhatsappSessionUrl = (safeApiUrl: string) =>
+  `${safeApiUrl}/sessions/${encodeURIComponent(WHATSAPP_SESSION_ID)}`;
+
+const isWhatsappSessionReady = (session?: WhatsappSessionStatus) => {
+  if (!session) return false;
+
+  const errorText = `${session.error || ''} ${session.message || ''}`.trim();
+
+  if (session.status !== 'connected') {
+    return false;
+  }
+
+  return !/restart required|socket not initialized|not ready|not found/i.test(errorText);
+};
+
+const ensureWhatsappSessionReady = async (safeApiUrl: string) => {
+  const sessionUrl = getWhatsappSessionUrl(safeApiUrl);
+
+  const readSession = async () => {
+    const response = await axios.get<WhatsappSessionStatus>(sessionUrl, {
+      timeout: WHATSAPP_TIMEOUT_MS
+    });
+    return response.data;
+  };
+
+  const initSession = async () => {
+    const response = await axios.post<WhatsappSessionStatus>(
+      sessionUrl,
+      {},
+      {
+        timeout: WHATSAPP_TIMEOUT_MS
+      }
+    );
+    return response.data;
+  };
+
+  const currentSession = await readSession();
+  if (isWhatsappSessionReady(currentSession)) {
+    return;
+  }
+
+  const initializedSession = await initSession();
+  if (isWhatsappSessionReady(initializedSession)) {
+    return;
+  }
+
+  await wait(WHATSAPP_SESSION_RETRY_DELAY_MS);
+
+  const refreshedSession = await readSession();
+  if (isWhatsappSessionReady(refreshedSession)) {
+    return;
+  }
+
+  const sessionReason =
+    refreshedSession.error ||
+    refreshedSession.message ||
+    initializedSession.error ||
+    initializedSession.message ||
+    currentSession.error ||
+    currentSession.message ||
+    'Unknown WhatsApp session error';
+
+  throw new Error(`WhatsApp session "${WHATSAPP_SESSION_ID}" is not ready: ${sessionReason}`);
+};
+
 const sendWhatsappOtp = async (to: string, otp: string) => {
   const safeApiUrl = WA_API_URL?.replace(/\/$/, '');
 
   if (!safeApiUrl) {
     throw new Error('WHATSAPP_API_URL is not configured');
   }
+
+  await ensureWhatsappSessionReady(safeApiUrl);
 
   await axios.post(
     `${safeApiUrl}/messages/send`,
@@ -87,6 +164,11 @@ const sendWhatsappOtp = async (to: string, otp: string) => {
 };
 
 const respondWhatsappError = (res: Response, error: unknown) => {
+  if (error instanceof Error && /WhatsApp session ".+" is not ready:/i.test(error.message)) {
+    res.status(503).json({ error: error.message });
+    return;
+  }
+
   if (axios.isAxiosError(error)) {
     const responseError =
       typeof error.response?.data === 'object' && error.response?.data && 'error' in error.response.data
