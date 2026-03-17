@@ -81,14 +81,7 @@ const getWhatsappSessionUrl = (safeApiUrl: string) =>
 
 const isWhatsappSessionReady = (session?: WhatsappSessionStatus) => {
   if (!session) return false;
-
-  const errorText = `${session.error || ''} ${session.message || ''}`.trim();
-
-  if (session.status !== 'connected') {
-    return false;
-  }
-
-  return !/restart required|socket not initialized|not ready|not found/i.test(errorText);
+  return session.status === 'connected';
 };
 
 const ensureWhatsappSessionReady = async (safeApiUrl: string) => {
@@ -129,16 +122,7 @@ const ensureWhatsappSessionReady = async (safeApiUrl: string) => {
     return;
   }
 
-  const sessionReason =
-    refreshedSession.error ||
-    refreshedSession.message ||
-    initializedSession.error ||
-    initializedSession.message ||
-    currentSession.error ||
-    currentSession.message ||
-    'Unknown WhatsApp session error';
-
-  throw new Error(`WhatsApp session "${WHATSAPP_SESSION_ID}" is not ready: ${sessionReason}`);
+  throw new Error(`WhatsApp session "${WHATSAPP_SESSION_ID}" is not ready`);
 };
 
 const sendWhatsappOtp = async (to: string, otp: string) => {
@@ -148,7 +132,11 @@ const sendWhatsappOtp = async (to: string, otp: string) => {
     throw new Error('WHATSAPP_API_URL is not configured');
   }
 
-  await ensureWhatsappSessionReady(safeApiUrl);
+  try {
+    await ensureWhatsappSessionReady(safeApiUrl);
+  } catch (sessionError) {
+    console.warn('WhatsApp session preflight warning:', sessionError);
+  }
 
   await axios.post(
     `${safeApiUrl}/messages/send`,
@@ -164,7 +152,7 @@ const sendWhatsappOtp = async (to: string, otp: string) => {
 };
 
 const respondWhatsappError = (res: Response, error: unknown) => {
-  if (error instanceof Error && /WhatsApp session ".+" is not ready:/i.test(error.message)) {
+  if (error instanceof Error && /WhatsApp session ".+" is not ready/i.test(error.message)) {
     res.status(503).json({ error: error.message });
     return;
   }
