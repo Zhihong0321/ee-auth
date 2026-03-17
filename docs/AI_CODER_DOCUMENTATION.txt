@@ -125,12 +125,15 @@ Required variables (.env file):
    - MUST be identical across all applications sharing the auth cookie
    - Should be cryptographically secure
 
-4. WHATSAPP_API_URL="https://whatsapp-api-server-production-c15f.up.railway.app"
+4. WHATSAPP_API_URL="https://ee-baileys-production.up.railway.app"
    - URL of internal WhatsApp API service
    - Used for sending OTP messages
-   - Expected to support: GET /api/status, POST /api/send
+   - Expected to support: GET /sessions/:id, POST /messages/send
 
-5. COOKIE_DOMAIN=".atap.solar"
+5. WHATSAPP_SESSION_ID="eternalgy-auth"
+   - Connected WhatsApp session used to send OTP messages
+
+6. COOKIE_DOMAIN=".atap.solar"
    - Domain scope for auth_token cookie
    - Leading dot (.atap.solar) allows sharing across subdomains
    - Required for SSO functionality
@@ -159,8 +162,8 @@ Flow:
    - Upsert: ON CONFLICT (phone_number) DO UPDATE
 6. Send via WhatsApp API:
    - Convert to international format: Replace leading '0' with '60'
-   - POST to {WHATSAPP_API_URL}/api/send
-   - Body: { "to": "60123456789", "message": "Your Atap.solar verification code is: 123456" }
+   - POST to {WHATSAPP_API_URL}/messages/send
+   - Body: { "sessionId": "eternalgy-auth", "to": "60123456789", "text": "Your Atap.solar verification code is: 123456" }
 7. Return 200 OK { "message": "OTP sent" }
 
 Error Handling:
@@ -652,7 +655,7 @@ Platform: Railway
 Current Environment:
 - Port: 3000
 - Database: PostgreSQL (shared)
-- WhatsApp API: https://whatsapp-api-server-production-c15f.up.railway.app
+- WhatsApp API: https://ee-baileys-production.up.railway.app
 - Domain: .atap.solar
 
 Deployment Notes:

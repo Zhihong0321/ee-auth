@@ -8,6 +8,7 @@ import { isReferralAuthReturnTo, normalizeMobileDigits } from '../utils/referral
 const JWT_SECRET = process.env.JWT_SECRET || 'default_secret';
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || '.atap.solar';
 const WA_API_URL = process.env.WHATSAPP_API_URL;
+const WHATSAPP_SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'eternalgy-auth';
 const WHATSAPP_TIMEOUT_MS = Number(process.env.WHATSAPP_TIMEOUT_MS || 15000);
 
 const sanitizePhone = (phone: string) => phone.replace(/\D/g, '');
@@ -73,10 +74,11 @@ const sendWhatsappOtp = async (to: string, otp: string) => {
   }
 
   await axios.post(
-    `${safeApiUrl}/api/send`,
+    `${safeApiUrl}/messages/send`,
     {
+      sessionId: WHATSAPP_SESSION_ID,
       to,
-      message: `Your Atap.solar verification code is: ${otp}`
+      text: `Your Atap.solar verification code is: ${otp}`
     },
     {
       timeout: WHATSAPP_TIMEOUT_MS
@@ -86,8 +88,18 @@ const sendWhatsappOtp = async (to: string, otp: string) => {
 
 const respondWhatsappError = (res: Response, error: unknown) => {
   if (axios.isAxiosError(error)) {
+    const responseError =
+      typeof error.response?.data === 'object' && error.response?.data && 'error' in error.response.data
+        ? String(error.response.data.error)
+        : undefined;
+
     if (error.code === 'ECONNABORTED') {
       res.status(504).json({ error: 'WhatsApp service timed out. Please try again.' });
+      return;
+    }
+
+    if (responseError && /session|connected|socket/i.test(responseError)) {
+      res.status(503).json({ error: `WhatsApp session "${WHATSAPP_SESSION_ID}" is not ready. Please reconnect it and try again.` });
       return;
     }
 
