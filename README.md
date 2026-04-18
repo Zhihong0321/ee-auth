@@ -21,6 +21,18 @@ WHATSAPP_API_URL="https://your-wa-api.com"
 COOKIE_DOMAIN=".atap.solar"
 ```
 
+You can also configure Postgres with split env vars instead of `DATABASE_URL`:
+
+```bash
+PGHOST="db.example.com"
+PGPORT=5432
+PGUSER="postgres"
+PGPASSWORD="your-rotated-password"
+PGDATABASE="app_db"
+```
+
+If you keep using `DATABASE_URL`, URL-encode special characters in the password. Raw characters like `@`, `:`, `/`, or `%` can break the connection string after a password reset.
+
 ## API Endpoints
 
 ### POST /auth/send-otp
@@ -40,6 +52,19 @@ Headers: `Cookie: auth_token=...`
 
 ### POST /auth/logout
 - Clears the session cookie.
+
+### GET /health/live
+- Liveness probe.
+- Returns 200 if the Node process is running.
+
+### GET /health/ready
+- Readiness probe.
+- Returns component status for configuration, PostgreSQL, and WhatsApp session.
+- Returns 503 if a required dependency is unavailable.
+
+### GET /health
+- Full health summary.
+- Returns 200 for `ok` or `degraded`, and 503 for `fail`.
 
 ## Development
 ```bash

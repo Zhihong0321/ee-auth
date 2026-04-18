@@ -5,7 +5,8 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes';
 import adminRoutes from './routes/adminRoutes';
 import { logger } from './middleware/authMiddleware';
-import { query } from './db';
+import { assertDatabaseConnection, query } from './db';
+import { getHealthSummary, getLiveness, isReady } from './health';
 import { ensureReferralAuthSchema } from './utils/referralAuth';
 
 dotenv.config();
@@ -66,8 +67,18 @@ app.use(cookieParser());
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok' });
+app.get('/health/live', (req, res) => {
+    res.json(getLiveness());
+});
+
+app.get('/health/ready', async (req, res) => {
+    const summary = await getHealthSummary();
+    res.status(isReady(summary) ? 200 : 503).json(summary);
+});
+
+app.get('/health', async (req, res) => {
+    const summary = await getHealthSummary();
+    res.status(summary.status === 'fail' ? 503 : 200).json(summary);
 });
 
 // Documentation
@@ -82,6 +93,7 @@ app.get('/', (req, res) => {
 
 // Start Server
 const startServer = async () => {
+    await assertDatabaseConnection();
     await ensureReferralAuthSchema();
     app.listen(PORT, () => {
         console.log(`Auth Service running on port ${PORT}`);
