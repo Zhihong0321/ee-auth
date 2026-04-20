@@ -159,7 +159,7 @@ function showRegistrationOverview(overview) {
 
     registrationModalContent.innerHTML = [
         renderOverviewSection(
-            'APPLICATION RECEIVED',
+            'APPLICATION STATUS',
             renderOverviewValue(overview.applicationReceived?.status || '-', getOverviewTone(overview.applicationReceived?.status)),
             overview.applicationReceived?.detail || '',
             {
