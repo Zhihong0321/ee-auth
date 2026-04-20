@@ -107,7 +107,13 @@ const sendWhatsappOtp = async (to: string, otp: string) => {
 
 const respondWhatsappError = (res: Response, error: unknown) => {
   if (error instanceof Error && /WhatsApp session ".+" is not ready/i.test(error.message)) {
-    res.status(503).json({ error: error.message });
+    res.status(503).json({
+      error: error.message,
+      code: 'WHATSAPP_SESSION_NOT_READY',
+      title: 'WhatsApp Service Unavailable',
+      detail: error.message,
+      systemAlert: true
+    });
     return;
   }
 
@@ -118,20 +124,44 @@ const respondWhatsappError = (res: Response, error: unknown) => {
         : undefined;
 
     if (error.code === 'ECONNABORTED') {
-      res.status(504).json({ error: 'WhatsApp service timed out. Please try again.' });
+      res.status(504).json({
+        error: 'WhatsApp service timed out. Please try again.',
+        code: 'WHATSAPP_TIMEOUT',
+        title: 'WhatsApp Service Timeout',
+        detail: 'WhatsApp service timed out. Please try again.',
+        systemAlert: true
+      });
       return;
     }
 
     if (responseError && /session|connected|socket/i.test(responseError)) {
-      res.status(503).json({ error: `WhatsApp session "${WHATSAPP_SESSION_ID}" is not ready. Please reconnect it and try again.` });
+      res.status(503).json({
+        error: `WhatsApp session "${WHATSAPP_SESSION_ID}" is not ready. Please reconnect it and try again.`,
+        code: 'WHATSAPP_SESSION_NOT_READY',
+        title: 'WhatsApp Service Unavailable',
+        detail: `WhatsApp session "${WHATSAPP_SESSION_ID}" is not ready. Please reconnect it and try again.`,
+        systemAlert: true
+      });
       return;
     }
 
-    res.status(503).json({ error: 'Failed to send OTP via WhatsApp' });
+    res.status(503).json({
+      error: 'Failed to send OTP via WhatsApp',
+      code: 'WHATSAPP_SEND_FAILED',
+      title: 'WhatsApp Service Error',
+      detail: responseError || 'Failed to send OTP via WhatsApp',
+      systemAlert: true
+    });
     return;
   }
 
-  res.status(503).json({ error: 'Failed to send OTP via WhatsApp' });
+  res.status(503).json({
+    error: 'Failed to send OTP via WhatsApp',
+    code: 'WHATSAPP_SEND_FAILED',
+    title: 'WhatsApp Service Error',
+    detail: 'Failed to send OTP via WhatsApp',
+    systemAlert: true
+  });
 };
 
 const resolveAuthMode = async (returnTo?: string) => {
@@ -242,7 +272,14 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     res.json({ message: 'OTP sent', mode: 'employee' });
   } catch (error) {
     console.error('Send OTP Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    const detail = error instanceof Error ? error.message : 'Internal Server Error';
+    res.status(500).json({
+      error: 'Internal Server Error',
+      code: 'SEND_OTP_INTERNAL_ERROR',
+      title: 'System Error',
+      detail,
+      systemAlert: true
+    });
   }
 };
 
@@ -367,7 +404,14 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     res.json({ success: true, user: { id: user.id, name: user.name, phone: localPhone, isAdmin, authMode: 'employee' } });
   } catch (error) {
     console.error('Verify OTP Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    const detail = error instanceof Error ? error.message : 'Internal Server Error';
+    res.status(500).json({
+      error: 'Internal Server Error',
+      code: 'VERIFY_OTP_INTERNAL_ERROR',
+      title: 'System Error',
+      detail,
+      systemAlert: true
+    });
   }
 };
 
@@ -401,11 +445,13 @@ export const lookupMobileByEmail = async (req: Request, res: Response): Promise<
     res.json(result.payload);
   } catch (error) {
     console.error('Lookup Mobile By Email Error:', error);
+    const detail = error instanceof Error ? error.message : 'We could not complete the email lookup right now. Please try again shortly.';
     res.status(500).json({
       error: 'Failed to look up registered mobile number.',
       code: 'EMAIL_LOOKUP_FAILED',
       title: 'Lookup Failed',
-      detail: 'We could not complete the email lookup right now. Please try again shortly.'
+      detail,
+      systemAlert: true
     });
   }
 };

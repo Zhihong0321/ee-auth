@@ -13,6 +13,12 @@ const otpMessage = document.getElementById('otp-message');
 const companyName = document.getElementById('company-name');
 const loginHeading = document.getElementById('login-heading');
 const loginSubtitle = document.getElementById('login-subtitle');
+const registrationModal = document.getElementById('registration-modal');
+const registrationModalBackdrop = document.getElementById('registration-modal-backdrop');
+const registrationModalClose = document.getElementById('registration-modal-close');
+const registrationModalTitle = document.getElementById('registration-modal-title');
+const registrationModalSubtitle = document.getElementById('registration-modal-subtitle');
+const registrationModalContent = document.getElementById('registration-modal-content');
 
 let currentPhone = '';
 let currentLocalPhone = '';
@@ -79,6 +85,117 @@ function renderMessageContent(content) {
     return parts.join('');
 }
 
+function formatSystemAlert(detail) {
+    return `[system alert] : ${detail}`;
+}
+
+function renderOverviewValue(value, tone = 'default') {
+    return `<div class="status-overview-value status-overview-value-${escapeHtml(tone)}">${escapeHtml(value)}</div>`;
+}
+
+function renderOverviewSection(label, value, detail, options = {}) {
+    const actions = [];
+
+    if (options.actionUrl && options.actionLabel) {
+        actions.push(
+            `<a class="message-action-button" href="${escapeHtml(options.actionUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(options.actionLabel)}</a>`
+        );
+    }
+
+    return `
+        <section class="status-overview-section">
+            <div class="status-overview-label">[ ${escapeHtml(label)} ]</div>
+            ${value}
+            ${detail ? `<div class="status-overview-detail">${escapeHtml(detail)}</div>` : ''}
+            ${actions.join('')}
+        </section>
+    `;
+}
+
+function renderRegisteredMobiles(registeredMobiles) {
+    if (!Array.isArray(registeredMobiles) || registeredMobiles.length === 0) {
+        return renderOverviewValue('Not found', 'muted');
+    }
+
+    if (registeredMobiles.length === 1) {
+        return renderOverviewValue(registeredMobiles[0], 'default');
+    }
+
+    const items = registeredMobiles
+        .map((mobile) => `<li>${escapeHtml(mobile)}</li>`)
+        .join('');
+
+    return `<ul class="status-overview-mobile-list">${items}</ul>`;
+}
+
+function getOverviewTone(value) {
+    const normalized = String(value || '').toUpperCase();
+
+    if (normalized === 'YES' || normalized === 'APPROVED' || normalized === 'FOUND') {
+        return 'success';
+    }
+
+    if (normalized.includes('PENDING')) {
+        return 'warning';
+    }
+
+    if (
+        normalized.includes('BLOCKED') ||
+        normalized.includes('NOT FOUND') ||
+        normalized.includes('NOT REGISTERED') ||
+        normalized === 'NO'
+    ) {
+        return 'danger';
+    }
+
+    return 'default';
+}
+
+function showRegistrationOverview(overview) {
+    registrationModalTitle.textContent = overview.title || 'Registration Status Overview';
+    registrationModalSubtitle.textContent = `${overview.lookupLabel || 'Lookup'}: ${overview.lookupValue || '-'}`;
+
+    registrationModalContent.innerHTML = [
+        renderOverviewSection(
+            'APPLICATION RECEIVED',
+            renderOverviewValue(overview.applicationReceived?.status || '-', getOverviewTone(overview.applicationReceived?.status)),
+            overview.applicationReceived?.detail || '',
+            {
+                actionUrl: overview.applicationReceived?.actionUrl,
+                actionLabel: overview.applicationReceived?.actionLabel
+            }
+        ),
+        renderOverviewSection(
+            'MOBILE NUMBER REGISTERED',
+            renderRegisteredMobiles(overview.registeredMobiles),
+            Array.isArray(overview.registeredMobiles) && overview.registeredMobiles.length > 1
+                ? 'Multiple mobile numbers are linked to this record.'
+                : ''
+        ),
+        renderOverviewSection(
+            'REGISTRATION STATUS',
+            renderOverviewValue(overview.registrationStatus?.status || '-', getOverviewTone(overview.registrationStatus?.status)),
+            overview.registrationStatus?.detail || ''
+        ),
+        renderOverviewSection(
+            'ACCOUNT ACTIVATED',
+            renderOverviewValue(overview.accountActivated?.status || '-', getOverviewTone(overview.accountActivated?.status)),
+            overview.accountActivated?.detail || ''
+        )
+    ].join('');
+
+    registrationModal.classList.remove('hidden');
+    registrationModal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+}
+
+function hideRegistrationOverview() {
+    registrationModal.classList.add('hidden');
+    registrationModal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+    registrationModalContent.innerHTML = '';
+}
+
 function showMessage(content, type = 'success') {
     messageBox.innerHTML = renderMessageContent(content);
     messageBox.className = type;
@@ -86,6 +203,17 @@ function showMessage(content, type = 'success') {
 }
 
 function showApiMessage(payload, fallbackText, type = 'error') {
+    if (payload && typeof payload === 'object' && payload.registrationOverview) {
+        hideMessage();
+        showRegistrationOverview(payload.registrationOverview);
+        return;
+    }
+
+    if (payload && typeof payload === 'object' && payload.systemAlert) {
+        showMessage(formatSystemAlert(payload.detail || payload.error || fallbackText), 'error');
+        return;
+    }
+
     if (payload && typeof payload === 'object') {
         showMessage(
             {
@@ -170,6 +298,7 @@ btnSend.addEventListener('click', async () => {
     }
 
     hideMessage();
+    hideRegistrationOverview();
     btnSend.disabled = true;
     btnSend.textContent = 'Sending...';
 
@@ -200,13 +329,13 @@ btnSend.addEventListener('click', async () => {
             stepOtp.classList.add('active');
             otpInput.focus();
         } else {
-            showApiMessage(data, 'Failed to send code.', 'error');
+            showApiMessage(data, res.status >= 500 ? formatSystemAlert(data.detail || data.error || 'Failed to send code.') : 'Failed to send code.', 'error');
         }
     } catch (err) {
         if (err.name === 'AbortError') {
-            showMessage('Request timed out. Please try again.', 'error');
+            showMessage(formatSystemAlert('Request timed out. Please try again.'), 'error');
         } else {
-            showMessage('Network error. Please try again.', 'error');
+            showMessage(formatSystemAlert('Network error. Please try again.'), 'error');
         }
     } finally {
         btnSend.disabled = false;
@@ -227,6 +356,7 @@ btnLookupMobile.addEventListener('click', async () => {
     }
 
     hideMessage();
+    hideRegistrationOverview();
     btnLookupMobile.disabled = true;
     btnLookupMobile.textContent = 'Checking...';
 
@@ -242,13 +372,17 @@ btnLookupMobile.addEventListener('click', async () => {
         if (res.ok) {
             showApiMessage(data, 'Registered mobile number found.', 'success');
         } else {
-            showApiMessage(data, 'Unable to find a registered mobile number for this email.', 'error');
+            showApiMessage(
+                data,
+                res.status >= 500 ? formatSystemAlert(data.detail || data.error || 'Unable to find a registered mobile number for this email.') : 'Unable to find a registered mobile number for this email.',
+                'error'
+            );
         }
     } catch (err) {
         if (err.name === 'AbortError') {
-            showMessage('Request timed out. Please try again.', 'error');
+            showMessage(formatSystemAlert('Request timed out. Please try again.'), 'error');
         } else {
-            showMessage('Network error. Please try again.', 'error');
+            showMessage(formatSystemAlert('Network error. Please try again.'), 'error');
         }
     } finally {
         btnLookupMobile.disabled = false;
@@ -264,6 +398,7 @@ btnVerify.addEventListener('click', async () => {
     }
 
     hideMessage();
+    hideRegistrationOverview();
     btnVerify.disabled = true;
     btnVerify.textContent = 'Verifying...';
 
@@ -295,13 +430,13 @@ btnVerify.addEventListener('click', async () => {
                 }
             }, 1000);
         } else {
-            showApiMessage(data, 'Invalid code.', 'error');
+            showApiMessage(data, res.status >= 500 ? formatSystemAlert(data.detail || data.error || 'Invalid code.') : 'Invalid code.', 'error');
         }
     } catch (err) {
         if (err.name === 'AbortError') {
-            showMessage('Request timed out. Please try again.', 'error');
+            showMessage(formatSystemAlert('Request timed out. Please try again.'), 'error');
         } else {
-            showMessage('Network error. Please try again.', 'error');
+            showMessage(formatSystemAlert('Network error. Please try again.'), 'error');
         }
     } finally {
         btnVerify.disabled = false;
@@ -313,6 +448,7 @@ btnBack.addEventListener('click', () => {
     stepOtp.classList.remove('active');
     stepPhone.classList.add('active');
     hideMessage();
+    hideRegistrationOverview();
 });
 
 phoneInput.addEventListener('keypress', (e) => {
@@ -325,6 +461,14 @@ emailLookupInput.addEventListener('keypress', (e) => {
 
 otpInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') btnVerify.click();
+});
+
+registrationModalClose.addEventListener('click', hideRegistrationOverview);
+registrationModalBackdrop.addEventListener('click', hideRegistrationOverview);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        hideRegistrationOverview();
+    }
 });
 
 loadAuthContext();

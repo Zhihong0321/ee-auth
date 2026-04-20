@@ -18,6 +18,30 @@ export type AuthErrorPayload = {
   maskedMobile?: string;
   actionUrl?: string;
   actionLabel?: string;
+  systemAlert?: boolean;
+  registrationOverview?: RegistrationOverview;
+};
+
+export type RegistrationOverview = {
+  title: string;
+  source: 'email' | 'mobile';
+  lookupLabel: string;
+  lookupValue: string;
+  applicationReceived: {
+    status: string;
+    detail: string;
+    actionUrl?: string;
+    actionLabel?: string;
+  };
+  registeredMobiles: string[];
+  registrationStatus: {
+    status: string;
+    detail: string;
+  };
+  accountActivated: {
+    status: string;
+    detail: string;
+  };
 };
 
 type EmployeeAuthFailure = {
@@ -47,10 +71,11 @@ export type EmailLookupResult =
         detail: string;
         records: Array<{
           maskedMobile: string;
-          status: 'pending' | 'approved';
+          status: 'pending' | 'approved' | 'blocked';
         }>;
         maskedMobiles: string[];
         hint?: string;
+        registrationOverview: RegistrationOverview;
       };
     }
   | {
@@ -113,9 +138,13 @@ const normalizeStatusKey = (value: unknown) => {
   return label ? label.toLowerCase() : null;
 };
 
-const toLookupStatus = (value: unknown): 'pending' | 'approved' => {
+const toLookupStatus = (value: unknown): 'pending' | 'approved' | 'blocked' => {
   const statusKey = normalizeStatusKey(value);
-  return statusKey === 'pending' ? 'pending' : 'approved';
+  if (statusKey === 'pending') return 'pending';
+  if (statusKey === 'blocked' || statusKey === 'suspended' || statusKey === 'disabled' || statusKey === 'inactive') {
+    return 'blocked';
+  }
+  return 'approved';
 };
 
 const maskMobileNumber = (value: string) => {
@@ -129,6 +158,25 @@ const maskMobileNumber = (value: string) => {
 
   return `${digits.slice(0, 3)}XXX${digits.slice(6)}`;
 };
+
+const buildRegistrationOverview = ({
+  source,
+  lookupLabel,
+  lookupValue,
+  applicationReceived,
+  registeredMobiles,
+  registrationStatus,
+  accountActivated
+}: Omit<RegistrationOverview, 'title'>): RegistrationOverview => ({
+  title: 'Registration Status Overview',
+  source,
+  lookupLabel,
+  lookupValue,
+  applicationReceived,
+  registeredMobiles,
+  registrationStatus,
+  accountActivated
+});
 
 const buildPhoneCandidates = (cleanPhone: string) => {
   const localPhone = toEmployeeLocalFormat(cleanPhone);
@@ -163,7 +211,27 @@ const buildMissingPhonePayload = (localPhone: string): EmployeeAuthFailure => ({
     hint: 'Double-check the number. If you are not sure which mobile number was registered, use the email lookup below to recover your registered mobile number.',
     maskedMobile: maskMobileNumber(localPhone),
     actionUrl: REGISTRATION_URL,
-    actionLabel: 'NEW USER REGISTRATION'
+    actionLabel: 'NEW USER REGISTRATION',
+    registrationOverview: buildRegistrationOverview({
+      source: 'mobile',
+      lookupLabel: 'Mobile Number',
+      lookupValue: localPhone,
+      applicationReceived: {
+        status: 'NOT FOUND',
+        detail: 'This mobile number was not found in the database.',
+        actionUrl: REGISTRATION_URL,
+        actionLabel: 'NEW USER REGISTRATION'
+      },
+      registeredMobiles: [],
+      registrationStatus: {
+        status: 'NOT REGISTERED',
+        detail: 'No registration record is linked to this mobile number yet.'
+      },
+      accountActivated: {
+        status: 'NO',
+        detail: 'Account activation is not available until registration has been created and approved.'
+      }
+    })
   }
 });
 
@@ -177,7 +245,25 @@ const buildUnlinkedAccountPayload = (localPhone: string): EmployeeAuthFailure =>
     title: 'Mobile Found, Login Not Ready',
     detail: 'We found this mobile number in the contact database, but no user login is linked to it yet.',
     hint: 'Ask an admin to link this mobile number to a user account before requesting another OTP.',
-    maskedMobile: maskMobileNumber(localPhone)
+    maskedMobile: maskMobileNumber(localPhone),
+    registrationOverview: buildRegistrationOverview({
+      source: 'mobile',
+      lookupLabel: 'Mobile Number',
+      lookupValue: localPhone,
+      applicationReceived: {
+        status: 'FOUND',
+        detail: 'This mobile number exists in the database.'
+      },
+      registeredMobiles: [maskMobileNumber(localPhone)].filter(Boolean),
+      registrationStatus: {
+        status: 'LOGIN NOT READY',
+        detail: 'Application is received, but the user login has not been linked by admin yet.'
+      },
+      accountActivated: {
+        status: 'NO',
+        detail: 'Account is not activated until the user login is linked and approved.'
+      }
+    })
   }
 });
 
@@ -212,7 +298,31 @@ const buildBlockedStatusPayload = (localPhone: string, statusLabel: string): Emp
       detail: `We found the user account linked to this mobile number, but its current status is "${statusLabel}".`,
       hint,
       accountStatus: statusLabel,
-      maskedMobile: maskMobileNumber(localPhone)
+      maskedMobile: maskMobileNumber(localPhone),
+      registrationOverview: buildRegistrationOverview({
+        source: 'mobile',
+        lookupLabel: 'Mobile Number',
+        lookupValue: localPhone,
+        applicationReceived: {
+          status: 'FOUND',
+          detail: 'This mobile number exists in the database.'
+        },
+        registeredMobiles: [maskMobileNumber(localPhone)].filter(Boolean),
+        registrationStatus: {
+          status: statusKey === 'pending' ? 'PENDING' : 'USER BLOCKED',
+          detail:
+            statusKey === 'pending'
+              ? 'Registration is still pending. Please contact ALLY (Admin).'
+              : `This account is blocked with status "${statusLabel}".`
+        },
+        accountActivated: {
+          status: 'NO',
+          detail:
+            statusKey === 'pending'
+              ? 'Account activation is not available while registration is pending.'
+              : 'Account activation is disabled because this user is blocked.'
+        }
+      })
     }
   };
 };
@@ -317,7 +427,8 @@ const buildEmailLookupUnavailablePayload = (): EmailLookupResult => ({
     code: 'EMAIL_LOOKUP_UNAVAILABLE',
     title: 'Email Lookup Not Configured',
     detail: 'This auth database does not expose an email field that can be matched to registered mobile numbers.',
-    hint: 'Please contact support with your registered email so an admin can check it manually.'
+    hint: 'Please contact support with your registered email so an admin can check it manually.',
+    systemAlert: true
   }
 });
 
@@ -448,12 +559,32 @@ export const lookupRegisteredMobilesByEmail = async (email: string): Promise<Ema
         detail: 'This email is not found in Database.',
         hint: 'Try another email address, or register as a new user if you have not signed up yet.',
         actionUrl: REGISTRATION_URL,
-        actionLabel: 'NEW USER REGISTRATION'
+        actionLabel: 'NEW USER REGISTRATION',
+        registrationOverview: buildRegistrationOverview({
+          source: 'email',
+          lookupLabel: 'Email Address',
+          lookupValue: normalizedEmail,
+          applicationReceived: {
+            status: 'NOT FOUND',
+            detail: 'The email address and mobile number were not found in the database.',
+            actionUrl: REGISTRATION_URL,
+            actionLabel: 'NEW USER REGISTRATION'
+          },
+          registeredMobiles: [],
+          registrationStatus: {
+            status: 'NOT REGISTERED',
+            detail: 'No registration record is linked to this email address yet.'
+          },
+          accountActivated: {
+            status: 'NO',
+            detail: 'Account activation is not available until registration has been created and approved.'
+          }
+        })
       }
     };
   }
 
-  const recordMap = new Map<string, { maskedMobile: string; status: 'pending' | 'approved' }>();
+  const recordMap = new Map<string, { maskedMobile: string; status: 'pending' | 'approved' | 'blocked' }>();
   for (const row of result.rows as Array<{ phone_number?: string; account_status?: string | null }>) {
     const maskedMobile = maskMobileNumber(String(row.phone_number || ''));
     if (!maskedMobile) continue;
@@ -466,6 +597,18 @@ export const lookupRegisteredMobilesByEmail = async (email: string): Promise<Ema
   }
 
   const records = Array.from(recordMap.values());
+  const hasPending = records.some((record) => record.status === 'pending');
+  const hasBlocked = records.some((record) => record.status === 'blocked');
+  const registrationStatus = hasBlocked ? 'USER BLOCKED' : hasPending ? 'PENDING' : 'APPROVED';
+  const registrationDetail = hasBlocked
+    ? 'One or more registrations linked to this email are blocked.'
+    : hasPending
+      ? 'Registration is still pending. Please contact ALLY (Admin).'
+      : 'No pending or blocked registration was found for this email.';
+  const activatedDetail =
+    hasBlocked || hasPending
+      ? 'Account is not activated because the registration is still pending or blocked.'
+      : 'Account is activated because there is no pending and no blocked registration.';
 
   return {
     ok: true,
@@ -479,7 +622,25 @@ export const lookupRegisteredMobilesByEmail = async (email: string): Promise<Ema
           : `Email is found in Database. We found ${records.length} recorded mobile numbers linked to this email address.`,
       records,
       maskedMobiles,
-      hint: 'Use the matching mobile number above on the login form.'
+      hint: 'Use the matching mobile number above on the login form.',
+      registrationOverview: buildRegistrationOverview({
+        source: 'email',
+        lookupLabel: 'Email Address',
+        lookupValue: normalizedEmail,
+        applicationReceived: {
+          status: 'FOUND',
+          detail: 'Email address and mobile number were found in the database.'
+        },
+        registeredMobiles: maskedMobiles,
+        registrationStatus: {
+          status: registrationStatus,
+          detail: registrationDetail
+        },
+        accountActivated: {
+          status: hasBlocked || hasPending ? 'NO' : 'YES',
+          detail: activatedDetail
+        }
+      })
     }
   };
 };
