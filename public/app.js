@@ -70,6 +70,12 @@ function renderMessageContent(content) {
         parts.push(`<div class="message-hint">${escapeHtml(content.hint)}</div>`);
     }
 
+    if (content.actionUrl && content.actionLabel) {
+        parts.push(
+            `<a class="message-action-button" href="${escapeHtml(content.actionUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(content.actionLabel)}</a>`
+        );
+    }
+
     return parts.join('');
 }
 
@@ -87,7 +93,9 @@ function showApiMessage(payload, fallbackText, type = 'error') {
                 detail: payload.detail || payload.error || fallbackText,
                 hint: payload.hint,
                 records: payload.records,
-                maskedMobiles: payload.maskedMobiles
+                maskedMobiles: payload.maskedMobiles,
+                actionUrl: payload.actionUrl,
+                actionLabel: payload.actionLabel
             },
             type
         );

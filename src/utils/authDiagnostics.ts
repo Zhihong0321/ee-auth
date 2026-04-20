@@ -6,6 +6,7 @@ const ACTIVE_STATUS_KEYS = new Set(['active', 'approved', 'enabled', 'verified',
 const tableColumnCache = new Map<string, { expiresAt: number; columns: Set<string> }>();
 
 type TableName = 'agent' | 'user' | 'customer' | 'referral';
+const REGISTRATION_URL = 'https://calculator.atap.solar/agent/registration';
 
 export type AuthErrorPayload = {
   error: string;
@@ -15,6 +16,8 @@ export type AuthErrorPayload = {
   hint?: string;
   accountStatus?: string | null;
   maskedMobile?: string;
+  actionUrl?: string;
+  actionLabel?: string;
 };
 
 type EmployeeAuthFailure = {
@@ -158,7 +161,9 @@ const buildMissingPhonePayload = (localPhone: string): EmployeeAuthFailure => ({
     title: 'No Such Mobile Number Detected',
     detail: 'We could not find any registered contact record for this mobile number.',
     hint: 'Double-check the number. If you are not sure which mobile number was registered, use the email lookup below to recover your registered mobile number.',
-    maskedMobile: maskMobileNumber(localPhone)
+    maskedMobile: maskMobileNumber(localPhone),
+    actionUrl: REGISTRATION_URL,
+    actionLabel: 'NEW USER REGISTRATION'
   }
 });
 
@@ -441,7 +446,9 @@ export const lookupRegisteredMobilesByEmail = async (email: string): Promise<Ema
         code: 'EMAIL_NOT_FOUND',
         title: 'Email Not Found',
         detail: 'This email is not found in Database.',
-        hint: 'Try another email address or contact support if your account was registered under a different email.'
+        hint: 'Try another email address, or register as a new user if you have not signed up yet.',
+        actionUrl: REGISTRATION_URL,
+        actionLabel: 'NEW USER REGISTRATION'
       }
     };
   }
