@@ -2,8 +2,15 @@ import { Request, Response } from 'express';
 import { query } from '../db';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
-import { randomBytes } from 'crypto';
-import { isReferralAuthReturnTo, normalizeMobileDigits } from '../utils/referralAuth';
+import { analyzeEmployeeAuthAttempt, lookupRegisteredMobilesByEmail } from '../utils/authDiagnostics';
+import { isReferralAuthReturnTo } from '../utils/referralAuth';
+import {
+  buildInternationalPhone,
+  createReferralProfile,
+  findReferralByMobile,
+  normalizeCountryCode,
+  normalizeReferralLocalPhone
+} from '../utils/referralProfiles';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'default_secret';
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || '.atap.solar';
@@ -13,59 +20,6 @@ const WHATSAPP_TIMEOUT_MS = Number(process.env.WHATSAPP_TIMEOUT_MS || 15000);
 const WHATSAPP_SESSION_RETRY_DELAY_MS = Number(process.env.WHATSAPP_SESSION_RETRY_DELAY_MS || 1500);
 
 const sanitizePhone = (phone: string) => phone.replace(/\D/g, '');
-
-const toLocalFormat = (phone: string) => {
-  if (phone.startsWith('65')) return phone;
-  if (phone.startsWith('60')) return '0' + phone.slice(2);
-  if (phone.startsWith('0')) return phone;
-  return '0' + phone;
-};
-
-const normalizeCountryCode = (countryCode?: string) => {
-  const cleanCountryCode = sanitizePhone(countryCode || '');
-  return cleanCountryCode ? cleanCountryCode : '60';
-};
-
-const buildInternationalPhone = (countryCode: string, localPhone: string) => {
-  const digits = normalizeMobileDigits(localPhone);
-  if (!digits) return countryCode;
-
-  if (digits.startsWith('0')) {
-    return `${countryCode}${digits.slice(1)}`;
-  }
-
-  return `${countryCode}${digits}`;
-};
-
-const normalizeReferralLocalPhone = (countryCode: string, localPhone: string) => {
-  const digits = normalizeMobileDigits(localPhone);
-
-  if (!digits) return '';
-
-  if (countryCode === '60') {
-    return digits.startsWith('0') ? digits : `0${digits}`;
-  }
-
-  return digits;
-};
-
-const getReferralPhoneCandidates = (countryCode: string, localPhone: string) => {
-  const digits = normalizeMobileDigits(localPhone);
-  const candidates = new Set<string>();
-
-  if (!digits) return [];
-
-  candidates.add(digits);
-
-  if (countryCode === '60') {
-    candidates.add(digits.startsWith('0') ? digits.slice(1) : digits);
-    candidates.add(digits.startsWith('0') ? digits : `0${digits}`);
-  }
-
-  return Array.from(candidates).filter(Boolean);
-};
-
-const randomId = (prefix: string) => `${prefix}_${randomBytes(6).toString('hex')}`;
 
 type WhatsappSessionStatus = {
   status?: string;
@@ -188,56 +142,6 @@ const resolveAuthMode = async (returnTo?: string) => {
   };
 };
 
-const findEmployeeUserByPhone = async (cleanPhone: string) => {
-  const localPhone = toLocalFormat(cleanPhone);
-  const isSingapore = cleanPhone.startsWith('65');
-  const intlPhone = isSingapore ? cleanPhone : '60' + localPhone.substring(1);
-  const malaysiaLocalPhone = isSingapore ? '0' + cleanPhone.slice(2) : localPhone;
-
-  const userResult = await query(
-    `SELECT u.id, u.access_level, a.name, a.contact
-     FROM "user" u
-     JOIN agent a ON u.linked_agent_profile = a.bubble_id
-     WHERE a.contact = $1 OR a.contact = $2 OR a.contact = $3`,
-    [malaysiaLocalPhone, intlPhone, cleanPhone]
-  );
-
-  return { userResult, localPhone };
-};
-
-const findReferralByMobile = async (countryCode: string, localPhone: string) => {
-  const candidates = getReferralPhoneCandidates(countryCode, localPhone);
-
-  return query(
-    `SELECT r.*
-     FROM referral r
-     WHERE regexp_replace(coalesce(r.mobile_number, ''), '\D', '', 'g') = ANY($1::text[])
-     ORDER BY r.id ASC
-     LIMIT 1`,
-    [candidates]
-  );
-};
-
-const createReferralProfile = async (countryCode: string, localPhone: string) => {
-  const customerId = randomId('cust');
-  const referralBubbleId = randomId('ref');
-  const displayPhone = normalizeReferralLocalPhone(countryCode, localPhone);
-
-  await query(
-    `INSERT INTO customer (customer_id, name, phone, lead_source, created_at, updated_at)
-     VALUES ($1, $2, $3, 'referral', NOW(), NOW())`,
-    [customerId, `Referral ${displayPhone}`, displayPhone]
-  );
-
-  const insertedReferral = await query(
-    `INSERT INTO referral (bubble_id, linked_customer_profile, name, mobile_number, status, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, 'Pending', NOW(), NOW())
-     RETURNING *`,
-    [referralBubbleId, customerId, `Referral ${displayPhone}`, displayPhone]
-  );
-
-  return insertedReferral.rows[0];
-};
 
 export const getAuthContext = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -306,13 +210,14 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     const cleanPhone = sanitizePhone(submittedPhone);
-    const { userResult, localPhone } = await findEmployeeUserByPhone(cleanPhone);
+    const employeeAuth = await analyzeEmployeeAuthAttempt(cleanPhone);
 
-    if (userResult.rows.length === 0) {
-      res.status(403).json({ error: 'Access Denied: Number not registered' });
+    if (!employeeAuth.ok) {
+      res.status(employeeAuth.status).json(employeeAuth.payload);
       return;
     }
 
+    const { localPhone } = employeeAuth;
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     await query(
@@ -409,7 +314,14 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     const cleanPhone = sanitizePhone(phoneNumber || localPhoneNumber || '');
-    const { userResult, localPhone } = await findEmployeeUserByPhone(cleanPhone);
+    const employeeAuth = await analyzeEmployeeAuthAttempt(cleanPhone);
+
+    if (!employeeAuth.ok) {
+      res.status(employeeAuth.status).json(employeeAuth.payload);
+      return;
+    }
+
+    const { user, localPhone } = employeeAuth;
 
     const otpResult = await query(
       `SELECT * FROM auth_hub_otps WHERE phone_number = $1 AND code = $2 AND expires_at > NOW()`,
@@ -420,13 +332,6 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       res.status(400).json({ error: 'Invalid or expired OTP' });
       return;
     }
-
-    if (userResult.rows.length === 0) {
-      res.status(403).json({ error: 'User not found' });
-      return;
-    }
-
-    const user = userResult.rows[0];
 
     let isAdmin = false;
     if (Array.isArray(user.access_level)) {
@@ -481,4 +386,26 @@ export const logout = (req: Request, res: Response) => {
     path: '/'
   });
   res.json({ message: 'Logged out' });
+};
+
+export const lookupMobileByEmail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const email = typeof req.body?.email === 'string' ? req.body.email : '';
+    const result = await lookupRegisteredMobilesByEmail(email);
+
+    if (!result.ok) {
+      res.status(result.status).json(result.payload);
+      return;
+    }
+
+    res.json(result.payload);
+  } catch (error) {
+    console.error('Lookup Mobile By Email Error:', error);
+    res.status(500).json({
+      error: 'Failed to look up registered mobile number.',
+      code: 'EMAIL_LOOKUP_FAILED',
+      title: 'Lookup Failed',
+      detail: 'We could not complete the email lookup right now. Please try again shortly.'
+    });
+  }
 };

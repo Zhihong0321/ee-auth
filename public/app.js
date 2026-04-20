@@ -1,7 +1,9 @@
 const phoneInput = document.getElementById('phone');
 const countryCodeSelect = document.getElementById('country-code');
+const emailLookupInput = document.getElementById('email-lookup');
 const otpInput = document.getElementById('otp');
 const btnSend = document.getElementById('btn-send-otp');
+const btnLookupMobile = document.getElementById('btn-lookup-mobile');
 const btnVerify = document.getElementById('btn-verify-otp');
 const btnBack = document.getElementById('btn-back');
 const stepPhone = document.getElementById('step-phone');
@@ -21,14 +23,83 @@ const REQUEST_TIMEOUT_MS = 20000;
 const params = new URLSearchParams(window.location.search);
 const returnTo = params.get('return_to');
 
-function showMessage(text, type = 'success') {
-    messageBox.textContent = text;
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderMessageContent(content) {
+    if (typeof content === 'string') {
+        return `<div class="message-detail">${escapeHtml(content)}</div>`;
+    }
+
+    const detail = content.detail || content.error || '';
+    const parts = [];
+
+    if (content.title) {
+        parts.push(`<div class="message-title">${escapeHtml(content.title)}</div>`);
+    }
+
+    if (detail) {
+        parts.push(`<div class="message-detail">${escapeHtml(detail)}</div>`);
+    }
+
+    if (
+        (!Array.isArray(content.records) || content.records.length === 0) &&
+        Array.isArray(content.maskedMobiles) &&
+        content.maskedMobiles.length > 0
+    ) {
+        const items = content.maskedMobiles
+            .map((mobile) => `<li>${escapeHtml(mobile)}</li>`)
+            .join('');
+        parts.push(`<ul class="message-list">${items}</ul>`);
+    }
+
+    if (Array.isArray(content.records) && content.records.length > 0) {
+        const items = content.records
+            .map((record) => `<li>Recorded mobile number = ${escapeHtml(record.maskedMobile)}, status = ${escapeHtml(record.status)}</li>`)
+            .join('');
+        parts.push(`<ul class="message-list">${items}</ul>`);
+    }
+
+    if (content.hint) {
+        parts.push(`<div class="message-hint">${escapeHtml(content.hint)}</div>`);
+    }
+
+    return parts.join('');
+}
+
+function showMessage(content, type = 'success') {
+    messageBox.innerHTML = renderMessageContent(content);
     messageBox.className = type;
     messageBox.classList.remove('hidden');
 }
 
+function showApiMessage(payload, fallbackText, type = 'error') {
+    if (payload && typeof payload === 'object') {
+        showMessage(
+            {
+                title: payload.title,
+                detail: payload.detail || payload.error || fallbackText,
+                hint: payload.hint,
+                records: payload.records,
+                maskedMobiles: payload.maskedMobiles
+            },
+            type
+        );
+        return;
+    }
+
+    showMessage(fallbackText, type);
+}
+
 function hideMessage() {
     messageBox.classList.add('hidden');
+    messageBox.innerHTML = '';
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -42,6 +113,14 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_M
         });
     } finally {
         clearTimeout(timeoutId);
+    }
+}
+
+async function parseJsonSafe(response) {
+    try {
+        return await response.json();
+    } catch (err) {
+        return {};
     }
 }
 
@@ -102,7 +181,7 @@ btnSend.addEventListener('click', async () => {
             })
         });
 
-        const data = await res.json();
+        const data = await parseJsonSafe(res);
 
         if (res.ok) {
             currentPhone = fullPhoneNumber;
@@ -113,11 +192,7 @@ btnSend.addEventListener('click', async () => {
             stepOtp.classList.add('active');
             otpInput.focus();
         } else {
-            if (res.status === 403 && authMode !== 'referral') {
-                showMessage('WhatsApp number not registered.', 'error');
-            } else {
-                showMessage(data.error || 'Failed to send code.', 'error');
-            }
+            showApiMessage(data, 'Failed to send code.', 'error');
         }
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -128,6 +203,48 @@ btnSend.addEventListener('click', async () => {
     } finally {
         btnSend.disabled = false;
         btnSend.textContent = 'Continue';
+    }
+});
+
+btnLookupMobile.addEventListener('click', async () => {
+    const email = emailLookupInput.value.trim();
+    if (!email) {
+        showMessage('Please enter your registered email address.', 'error');
+        return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        showMessage('Please enter a valid email address.', 'error');
+        return;
+    }
+
+    hideMessage();
+    btnLookupMobile.disabled = true;
+    btnLookupMobile.textContent = 'Checking...';
+
+    try {
+        const res = await fetchWithTimeout('/auth/lookup-mobile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, returnTo })
+        });
+
+        const data = await parseJsonSafe(res);
+
+        if (res.ok) {
+            showApiMessage(data, 'Registered mobile number found.', 'success');
+        } else {
+            showApiMessage(data, 'Unable to find a registered mobile number for this email.', 'error');
+        }
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            showMessage('Request timed out. Please try again.', 'error');
+        } else {
+            showMessage('Network error. Please try again.', 'error');
+        }
+    } finally {
+        btnLookupMobile.disabled = false;
+        btnLookupMobile.textContent = 'Check Registered Mobile';
     }
 });
 
@@ -155,7 +272,7 @@ btnVerify.addEventListener('click', async () => {
             })
         });
 
-        const data = await res.json();
+        const data = await parseJsonSafe(res);
 
         if (res.ok) {
             showMessage('Authentication successful! Redirecting...', 'success');
@@ -170,7 +287,7 @@ btnVerify.addEventListener('click', async () => {
                 }
             }, 1000);
         } else {
-            showMessage(data.error || 'Invalid code.', 'error');
+            showApiMessage(data, 'Invalid code.', 'error');
         }
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -192,6 +309,10 @@ btnBack.addEventListener('click', () => {
 
 phoneInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') btnSend.click();
+});
+
+emailLookupInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') btnLookupMobile.click();
 });
 
 otpInput.addEventListener('keypress', (e) => {
