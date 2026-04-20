@@ -104,8 +104,10 @@ function renderOverviewSection(label, value, detail, options = {}) {
 
     return `
         <section class="status-overview-section">
-            <div class="status-overview-label">[ ${escapeHtml(label)} ]</div>
-            ${value}
+            <div class="status-overview-heading">
+                <div class="status-overview-label">[ ${escapeHtml(label)} ]</div>
+                ${value}
+            </div>
             ${detail ? `<div class="status-overview-detail">${escapeHtml(detail)}</div>` : ''}
             ${actions.join('')}
         </section>
@@ -122,7 +124,7 @@ function renderRegisteredMobiles(registeredMobiles) {
     }
 
     const items = registeredMobiles
-        .map((mobile) => `<li>${escapeHtml(mobile)}</li>`)
+        .map((mobile) => `<li class="status-overview-mobile-pill">${escapeHtml(mobile)}</li>`)
         .join('');
 
     return `<ul class="status-overview-mobile-list">${items}</ul>`;
