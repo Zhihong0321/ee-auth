@@ -21,6 +21,16 @@ WHATSAPP_API_URL="https://your-wa-api.com"
 COOKIE_DOMAIN=".atap.solar"
 ```
 
+Optional AI tester login for non-production environments:
+
+```bash
+ENABLE_AI_AGENT_AUTH="true"
+AI_AGENT_AUTH_NUMBERS="999999999999999001:agent_1,999999999999999002:agent_2"
+AI_AGENT_TEST_OTP="000000"
+```
+
+These values allow long numeric test-agent identifiers to use the normal OTP screen without sending WhatsApp messages. Keep them as strings and do not enable this path with `NODE_ENV=production`.
+
 You can also configure Postgres with split env vars instead of `DATABASE_URL`:
 
 ```bash
@@ -38,11 +48,13 @@ If you keep using `DATABASE_URL`, URL-encode special characters in the password.
 ### POST /auth/send-otp
 Body: `{ "phoneNumber": "0123456789" }`
 - Sends a 6-digit OTP to the user's WhatsApp.
+- For `AI_AGENT_AUTH_NUMBERS` in non-production, skips WhatsApp and starts the test login flow.
 - Returns 200 OK or error.
 
 ### POST /auth/verify-otp
 Body: `{ "phoneNumber": "0123456789", "code": "123456" }`
 - Verifies the code.
+- For `AI_AGENT_AUTH_NUMBERS` in non-production, accepts `AI_AGENT_TEST_OTP`.
 - Sets `auth_token` cookie.
 - Returns user details.
 

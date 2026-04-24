@@ -18,8 +18,42 @@ const WA_API_URL = process.env.WHATSAPP_API_URL;
 const WHATSAPP_SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'eternalgy-auth';
 const WHATSAPP_TIMEOUT_MS = Number(process.env.WHATSAPP_TIMEOUT_MS || 15000);
 const WHATSAPP_SESSION_RETRY_DELAY_MS = Number(process.env.WHATSAPP_SESSION_RETRY_DELAY_MS || 1500);
-
 const sanitizePhone = (phone: string) => phone.replace(/\D/g, '');
+
+type AiAgentAuthRecord = {
+  phone: string;
+  agentId: string;
+};
+
+const isAiAgentAuthEnabled = () =>
+  process.env.ENABLE_AI_AGENT_AUTH === 'true' && process.env.NODE_ENV !== 'production';
+
+const getAiAgentAuthRecords = (): AiAgentAuthRecord[] =>
+  (process.env.AI_AGENT_AUTH_NUMBERS || '')
+    .split(',')
+    .map((entry) => {
+      const [phonePart, agentIdPart] = entry.trim().split(':');
+      const phone = sanitizePhone(phonePart || '');
+      if (!phone) return null;
+
+      return {
+        phone,
+        agentId: agentIdPart?.trim() || phone
+      };
+    })
+    .filter((record): record is AiAgentAuthRecord => Boolean(record));
+
+const findAiAgentAuthRecord = (...phoneCandidates: string[]) => {
+  if (!isAiAgentAuthEnabled()) return undefined;
+
+  const candidateSet = new Set(
+    phoneCandidates
+      .map((phone) => sanitizePhone(phone || ''))
+      .filter(Boolean)
+  );
+
+  return getAiAgentAuthRecords().find((record) => candidateSet.has(record.phone));
+};
 
 type WhatsappSessionStatus = {
   status?: string;
@@ -234,6 +268,13 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     const submittedPhone = phoneNumber || localPhoneNumber;
+    const aiAgentRecord = findAiAgentAuthRecord(phoneNumber, localPhoneNumber);
+    if (aiAgentRecord) {
+      console.info(`AI agent auth OTP bypass used for ${aiAgentRecord.agentId}`);
+      res.json({ message: 'OTP sent', mode: 'employee', isAiAgentAuth: true });
+      return;
+    }
+
     if (!submittedPhone) {
       res.status(400).json({ error: 'Phone number is required' });
       return;
@@ -351,6 +392,54 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     const cleanPhone = sanitizePhone(phoneNumber || localPhoneNumber || '');
+    const aiAgentRecord = findAiAgentAuthRecord(phoneNumber, localPhoneNumber);
+    if (aiAgentRecord) {
+      if (code !== (process.env.AI_AGENT_TEST_OTP || '000000')) {
+        res.status(400).json({ error: 'Invalid or expired OTP' });
+        return;
+      }
+
+      console.info(`AI agent auth login used for ${aiAgentRecord.agentId}`);
+
+      const token = jwt.sign(
+        {
+          userId: `ai-agent:${aiAgentRecord.agentId}`,
+          phone: aiAgentRecord.phone,
+          role: 'user',
+          isAdmin: false,
+          name: `AI Test Agent ${aiAgentRecord.agentId}`,
+          authMode: 'employee',
+          isAiAgentAuth: true,
+          agentId: aiAgentRecord.agentId
+        },
+        JWT_SECRET,
+        { expiresIn: '14d' }
+      );
+
+      res.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'lax',
+        domain: COOKIE_DOMAIN,
+        path: '/',
+        maxAge: 14 * 24 * 60 * 60 * 1000
+      });
+
+      res.json({
+        success: true,
+        user: {
+          id: `ai-agent:${aiAgentRecord.agentId}`,
+          name: `AI Test Agent ${aiAgentRecord.agentId}`,
+          phone: aiAgentRecord.phone,
+          isAdmin: false,
+          authMode: 'employee',
+          isAiAgentAuth: true,
+          agentId: aiAgentRecord.agentId
+        }
+      });
+      return;
+    }
+
     const employeeAuth = await analyzeEmployeeAuthAttempt(cleanPhone);
 
     if (!employeeAuth.ok) {
